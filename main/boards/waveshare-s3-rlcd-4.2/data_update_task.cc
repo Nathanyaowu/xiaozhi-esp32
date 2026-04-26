@@ -553,8 +553,8 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
             }
         }
 
-        // ===== 股票数据获取（30 秒一次，仅在网络连接且非音频会话时）=====
-        if (network_connected && !in_audio_session &&
+        // ===== 股票数据获取（30 秒一次，仅在股票页且网络连接且非音频会话时）=====
+        if (self->IsStockMode() && network_connected && !in_audio_session &&
             (last_stock_fetch_ms == 0 || (now_ms - last_stock_fetch_ms >= STOCK_FETCH_INTERVAL))) {
             StockData results[MAX_STOCKS] = {};
             int fetched = FetchStockData(kDefaultStocks, results, MAX_STOCKS);

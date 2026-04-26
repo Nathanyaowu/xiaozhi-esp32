@@ -81,7 +81,7 @@ void CustomLcdDisplay::SetupStockUI() {
     lv_obj_set_style_text_font(title_label, font_title, 0);
     lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
     lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 10, title_y);
-    lv_label_set_text(title_label, "证券行情");
+    lv_label_set_text(title_label, "Stock");
 
     // 时钟（标题右侧）
     stock_time_label_ = lv_label_create(screen);
@@ -104,9 +104,9 @@ void CustomLcdDisplay::SetupStockUI() {
     // 表头标签
     const int header_label_y = header_y + 4;
     const int col_name_x = 10;
-    const int col_price_x = 110;
-    const int col_change_x = 220;
-    const int col_range_x = 310;
+    const int col_price_x = 100;
+    const int col_change_x = 195;
+    const int col_range_x = 280;
 
     auto make_header = [&](int x, const char* text) {
         lv_obj_t *lbl = lv_label_create(screen);

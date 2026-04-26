@@ -409,11 +409,13 @@ void CustomLcdDisplay::SetTheme(Theme* theme) {
 }
 
 void CustomLcdDisplay::ApplyDisplayMode() {
+    // 先隐藏所有页面
     if (weather_page_) lv_obj_add_flag(weather_page_, LV_OBJ_FLAG_HIDDEN);
     if (music_page_) lv_obj_add_flag(music_page_, LV_OBJ_FLAG_HIDDEN);
     if (pomodoro_page_) lv_obj_add_flag(pomodoro_page_, LV_OBJ_FLAG_HIDDEN);
     if (stock_page_) lv_obj_add_flag(stock_page_, LV_OBJ_FLAG_HIDDEN);
 
+    // 显示当前页面
     switch (display_mode_) {
         case MODE_WEATHER:
             if (weather_page_) lv_obj_remove_flag(weather_page_, LV_OBJ_FLAG_HIDDEN);
@@ -432,6 +434,7 @@ void CustomLcdDisplay::ApplyDisplayMode() {
 
 void CustomLcdDisplay::CycleDisplayMode() {
     DisplayLockGuard lock(this);
+    // 三页循环：天气 → 音乐 → 番茄钟 → 天气
     switch (display_mode_) {
         case MODE_WEATHER:  display_mode_ = MODE_MUSIC; break;
         case MODE_MUSIC:    display_mode_ = MODE_POMODORO; break;
