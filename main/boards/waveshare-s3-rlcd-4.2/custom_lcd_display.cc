@@ -55,55 +55,112 @@ void CustomLcdDisplay::Lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area
 
 // ===== 构造 / 析构 =====
 
-CustomLcdDisplay::CustomLcdDisplay(esp_lcd_panel_io_handle_t panel_io,
-    esp_lcd_panel_handle_t panel,
-    int width, int height, int offset_x, int offset_y,
-    bool mirror_x, bool mirror_y, bool swap_xy,
-    spi_display_config_t spiconfig,
-    spi_host_device_t spi_host) : LcdDisplay(panel_io, panel, width, height)
+CustomLcdDisplay::CustomLcdDisplay(
+    esp_lcd_panel_io_handle_t panel_io,  // LCD 面板 IO 句柄 — 传 NULL（RLCD 自己管 SPI，不用 ESP-IDF 面板框架）
+    esp_lcd_panel_handle_t panel,        // LCD 面板句柄 — 传 NULL（同上）
+    int width,                           // 屏幕宽度 — 400 像素（RLCD_WIDTH）
+    int height,                          // 屏幕高度 — 300 像素（RLCD_HEIGHT）
+    int offset_x,                        // 显示区域 X 偏移 — 像素起始偏移，一般 0
+    int offset_y,                        // 显示区域 Y 偏移 — 像素起始偏移，一般 0
+    bool mirror_x,                       // 水平镜像 — 左右翻转显示
+    bool mirror_y,                       // 垂直镜像 — 上下翻转显示
+    bool swap_xy,                        // XY 轴交换 — 横屏/竖屏切换（true=旋转90°）
+    spi_display_config_t spiconfig,      // SPI 引脚配置 — MOSI/SCK/CS/DC/RST 等 GPIO 编号
+    spi_host_device_t spi_host           // SPI 总线 — SPI2_HOST 或 SPI3_HOST
+    ) : LcdDisplay(panel_io, panel, width, height)  // 调用父类 LcdDisplay 构造函数，传入面板句柄和尺寸（panel_io/panel 均为 NULL）
 {
-    // 1. 初始化 RLCD 硬件驱动
+    // ========== 第 1 步：创建 RLCD 硬件驱动 ==========
+    // 在堆上 new 一个 RlcdDriver，内部会：
+    //   - 初始化 SPI 总线（40MHz，DMA 自动选择）
+    //   - 配置 RST 复位引脚为输出
+    //   - 在 PSRAM 上分配 DispBuffer（15KB，1-bit 帧缓冲）
+    //   - 在 PSRAM 上分配 PixelIndexLUT / PixelBitLUT（像素坐标 → 字节位置的查找表，加速 SetPixel）
     rlcd_ = new RlcdDriver(spiconfig, width, height, spi_host);
 
-    // 2. 初始化 LVGL
+    // ========== 第 2 步：初始化 LVGL 图形库 ==========
     ESP_LOGI(TAG, "初始化 LVGL");
+
+    // 初始化 LVGL 核心（内部数据结构、定时器系统、主题等）
     lv_init();
+
+    // 获取 esp_lvgl_port 的默认配置（栈大小、tick 周期等）
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    // LVGL 内部 FreeRTOS 任务的优先级设为 2（低优先级，不抢占音频/网络）
     port_cfg.task_priority = 2;
+    // LVGL 内部任务每 50ms 执行一次 lv_timer_handler()
+    // 即最快 20FPS 检查脏控件并触发 flush 回调
     port_cfg.timer_period_ms = 50;
+    // 启动 LVGL 端口：内部创建一个 FreeRTOS 任务 + 互斥锁
+    // 从此 LVGL 的定时任务开始每 50ms 运行
     lvgl_port_init(&port_cfg);
+
+    // 获取 LVGL 互斥锁（0 = 永久等待直到拿到锁）
+    // 后续所有 LVGL API 调用必须在锁内进行（LVGL 非线程安全）
     lvgl_port_lock(0);
 
+    // 总像素数 = 400 × 300 = 120,000
     int transfer = width * height;
+
+    // 创建一个 LVGL display 对象，告诉 LVGL 屏幕尺寸
     display_ = lv_display_create(width, height);
+
+    // 注册 flush 回调：LVGL 画完脏区域后调用此函数把像素推给屏幕
+    // Lvgl_flush_cb 内部做 RGB565→1-bit 转换 + SPI 整帧发送
     lv_display_set_flush_cb(display_, Lvgl_flush_cb);
+
+    // 把 this（CustomLcdDisplay 实例）绑定到 display 对象上
+    // flush 回调里通过 lv_display_get_user_data(disp) 拿回 this，从而访问 rlcd_ 等成员
     lv_display_set_user_data(display_, this);
+
+    // 计算 LVGL 绘图缓冲区大小：120,000 像素 × 2 字节(RGB565) = 240,000 字节 ≈ 234KB
     size_t lvgl_buffer_size = LV_COLOR_FORMAT_GET_SIZE(LV_COLOR_FORMAT_RGB565) * transfer;
+
+    // 在 PSRAM 上分配绘图缓冲区（234KB 太大不适合放 SRAM）
+    // LVGL 渲染引擎在这块缓冲区上画 RGB565 像素，画完后交给 flush_cb
     uint8_t *lvgl_buffer1 = (uint8_t *)heap_caps_malloc(lvgl_buffer_size, MALLOC_CAP_SPIRAM);
+    // 分配失败直接崩溃（没有绘图缓冲 LVGL 无法工作）
     assert(lvgl_buffer1);
+
+    // 配置 LVGL 使用单缓冲 + 局部渲染模式
+    // 参数：buf1=绘图缓冲, buf2=NULL(不用双缓冲), 大小, 渲染模式
+    // PARTIAL 模式：LVGL 只渲染脏区域，不是每次都画全屏，省 CPU
     lv_display_set_buffers(display_, lvgl_buffer1, NULL, lvgl_buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
-    // 3. 初始化 RLCD 屏幕
+    // ========== 第 3 步：初始化 RLCD 屏幕硬件 ==========
     ESP_LOGI(TAG, "初始化 RLCD 屏幕");
+    // 发送硬件复位 + 初始化命令序列（VCOM 电压、扫描方向、色深、显示开启等）
+    // 完成后屏幕清为全白，准备接收像素数据
     rlcd_->RLCD_Init();
 
+    // 释放 LVGL 互斥锁，允许 LVGL 定时任务开始正常调度
     lvgl_port_unlock();
+
+    // 安全检查：如果 display 创建失败则放弃后续 UI 初始化
     if (display_ == nullptr) {
         ESP_LOGE(TAG, "显示初始化失败");
         return;
     }
 
-    // 4. 创建天气页 + 音乐页 + 番茄钟页 UI
+    // ========== 第 4 步：创建三个 UI 页面 ==========
     ESP_LOGI(TAG, "创建天气页 + 音乐页 + 番茄钟页 UI");
-    SetupWeatherUI();
-    SetupMusicUI();
-    SetupPomodoroUI();
-    // 告诉显示框架：当前自定义 UI 已经初始化完成
-    // 否则基类的 SetStatus/ShowNotification 会一直误判为“UI 未准备好”
+    // 每个 Setup 函数内部创建一个 lv_obj（screen），在上面摆放控件（标签、图标、卡片等）
+    // 三个页面共存于内存，但同一时刻只有一个是可见的
+    SetupWeatherUI();    // 天气页：时钟 + 日历 + 天气 + AI 对话 + 备忘录
+    SetupMusicUI();      // 音乐页：唱片封面 + 歌曲信息 + 播放状态
+    SetupPomodoroUI();   // 番茄钟页：倒计时 + 进度条 + 状态文字
+
+    // 标记 UI 初始化完成
+    // 基类 LcdDisplay 的 SetStatus/SetChatMessage 等函数会检查此标志
+    // 为 false 时这些函数会直接 return，避免操作尚未创建的控件导致崩溃
     setup_ui_called_ = true;
+
+    // 根据 current_mode_（默认 Weather）加载对应页面到屏幕
+    // 内部调用 lv_screen_load() 切换当前可见页面
     ApplyDisplayMode();
 
-    // 5. 启动时从 NVS 加载上次保存的备忘录
+    // ========== 第 5 步：从 NVS 恢复备忘录数据 ==========
+    // 读取上次保存的备忘录 JSON，解析后更新天气页右下角的备忘录列表控件
+    // 这样重启后备忘录不会丢失
     LoadMemoFromNvs();
 }
 

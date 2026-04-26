@@ -146,6 +146,7 @@ public:
     
     // 系统信息滚动控制（供 CustomBoard 设置标志，避免 DataUpdateTask 锁竞争）
     void SetShowingSystemInfo(bool showing) { showing_system_info_ = showing; }
+    bool IsShowingSystemInfo() const { return showing_system_info_; }
     
     // 省电模式：记录用户活动，唤醒省电模式
     void NotifyUserActivity();

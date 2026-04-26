@@ -25,18 +25,43 @@ LV_FONT_DECLARE(font_puhui_14_1);
 LV_FONT_DECLARE(font_puhui_16_4);
 #include "managers/weather_manager.h"
 
-#define TAG "waveshare_rlcd_4_2"
+#define TAG "waveshare_rlcd_4_2"  // ESP_LOG 输出统一前缀，便于在串口日志中过滤本板子的输出
 
+/**
+ * @class CustomBoard
+ * @brief Waveshare ESP32-S3-RLCD-4.2 开发板的板级实现类
+ *
+ * 继承关系：Board（抽象接口）← WifiBoard（提供 WiFi/BluFi/Hotspot 配网）← CustomBoard（本类）
+ *
+ * 职责：
+ *   1) 在构造函数中初始化板上所有外设：I2C 总线、传感器、SD 卡、按键、MCP 工具、LCD 显示
+ *   2) 提供 GetAudioCodec / GetDisplay / GetBatteryLevel 等覆盖虚函数，供框架统一调用
+ *   3) 通过 InitializeTools 注册 11 个 MCP 工具（系统信息、天气、屏幕切换、番茄钟、备忘录）
+ *
+ * 生命周期：
+ *   - 由文件末尾 DECLARE_BOARD(CustomBoard) 宏在 main.cc → Board::GetInstance() 中懒加载实例化
+ *   - 全局唯一单例，进程结束前不析构（嵌入式环境无析构需求）
+ *
+ * 调用入口：
+ *   app_main (main.cc) → Application::Initialize → Board::GetInstance() → new CustomBoard()
+ */
 class CustomBoard : public WifiBoard {
 private:
-    i2c_master_bus_handle_t i2c_bus_;
-    Button boot_button_;
-    Button user_button_;  // GPIO18 用户按键
-    CustomLcdDisplay *display_;
-    adc_oneshot_unit_handle_t adc1_handle;
-    adc_cali_handle_t cali_handle;
+    i2c_master_bus_handle_t i2c_bus_;   // I2C 主总线句柄，被 ES8311/ES7210/SHTC3/PCF85063 共享
+    Button boot_button_;                // BOOT 按键（GPIO0），主交互按键
+    Button user_button_;                // USER 按键（GPIO18），辅助功能按键
+    CustomLcdDisplay *display_;         // 自定义 LCD 显示对象指针，由 InitializeLcdDisplay 创建
+    adc_oneshot_unit_handle_t adc1_handle;  // ADC1 单次采样句柄（电池电压检测，已被 BatterygetVoltage 内部静态变量取代）
+    adc_cali_handle_t cali_handle;          // ADC 校准句柄（同上）
 
-    // 校验时间标签是否为 HH:MM（24 小时制）
+    /**
+     * @brief 校验备忘录时间标签是否为合法的 HH:MM（24 小时制）字符串
+     * @param time_str 时间字符串。允许空串（表示"无定时"备忘）
+     * @return true=合法或为空；false=格式错误
+     * @调用者 InitializeTools 中 self.memo.add 工具的回调（行 509）
+     * @回调 无（纯函数，仅做字符串校验）
+     * @副作用 无
+     */
     bool IsValidMemoTimeLabel(const std::string& time_str) {
         if (time_str.empty()) {
             return true;  // 允许无时间备忘
@@ -55,6 +80,16 @@ private:
         return (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59);
     }
 
+    /**
+     * @brief 初始化 I2C 主总线（ESP32_I2C_HOST，配置见 config.h）
+     * @调用者 CustomBoard 构造函数（行 733），是构造序列的第 1 步
+     * @回调 ESP-IDF: i2c_new_master_bus
+     * @副作用
+     *   - 申请 I2C 主总线资源，设置 i2c_bus_ 句柄
+     *   - 启用 SDA/SCL 内部上拉
+     *   - 失败时 ESP_ERROR_CHECK 触发 abort（这是有意行为：I2C 是后续所有外设的前置条件）
+     * @注意 该总线后续被 ES8311(0x18)、ES7210(0x40)、SHTC3(0x70)、PCF85063(0x51) 四个设备复用
+     */
     void InitializeI2c() {
         // I2C 总线初始化
         // 这条 I2C 总线被多个设备共享：
@@ -67,19 +102,35 @@ private:
         i2c_bus_cfg.sda_io_num = AUDIO_CODEC_I2C_SDA_PIN;
         i2c_bus_cfg.scl_io_num = AUDIO_CODEC_I2C_SCL_PIN;
         i2c_bus_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
-        i2c_bus_cfg.glitch_ignore_cnt = 7;
-        i2c_bus_cfg.intr_priority = 0;
-        i2c_bus_cfg.trans_queue_depth = 0;
-        i2c_bus_cfg.flags.enable_internal_pullup = 1;
+        i2c_bus_cfg.glitch_ignore_cnt = 7;       // 滤除 7 个时钟周期内的毛刺
+        i2c_bus_cfg.intr_priority = 0;           // 默认中断优先级
+        i2c_bus_cfg.trans_queue_depth = 0;       // 0 = 同步（阻塞）模式
+        i2c_bus_cfg.flags.enable_internal_pullup = 1;  // 启用内部上拉（板上若已有外部上拉可设 0）
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus_));
     }
 
+    /**
+     * @brief 初始化板上所有 I2C 传感器（SHTC3 温湿度 + PCF85063 RTC + NTP 同步）
+     * @调用者 CustomBoard 构造函数（行 735），紧接 InitializeI2c 之后
+     * @回调 SensorManager::getInstance().init(i2c_bus_)
+     * @副作用
+     *   - 创建 SensorManager 单例，挂载 SHTC3 / PCF85063 设备到 i2c_bus_
+     *   - 启动后台 NTP 同步任务（首次需联网后才生效）
+     */
     void InitializeSensors() {
         // 初始化传感器（使用同一条 I2C 总线）
         SensorManager::getInstance().init(i2c_bus_);
         ESP_LOGI(TAG, "传感器初始化完成");
     }
 
+    /**
+     * @brief 初始化 SD 卡（SDMMC 4-bit 模式，引脚见 SdcardManager::init）
+     * @调用者 CustomBoard 构造函数（行 736）
+     * @回调 SdcardManager::getInstance().init()
+     * @副作用
+     *   - 成功时挂载 /sdcard FAT 文件系统，番茄钟白噪音可用
+     *   - 失败时仅打 WARN 日志，不阻塞启动（SD 卡为可选外设）
+     */
     void InitializeSdcard() {
         // 初始化 SD 卡（SDMMC 模式，板载 SD 卡槽默认引脚）
         bool ok = SdcardManager::getInstance().init();
@@ -90,10 +141,39 @@ private:
         }
     }
 
-    void InitializeButtons() { 
+    /**
+     * @brief 注册 BOOT 与 USER 两个按键的全部回调（单击/双击/长按）
+     * @调用者 CustomBoard 构造函数（行 737）
+     * @回调
+     *   - boot_button_.OnClick → Application::ToggleChatState 或 EnterWifiConfigMode
+     *   - user_button_.OnClick → display_->CycleDisplayMode
+     *   - user_button_.OnDoubleClick → this->RefreshAllData
+     *   - user_button_.OnLongPress → this->ShowSystemInfo
+     *   - 每个回调首条都调 display_->NotifyUserActivity 重置自动省电计时
+     * @副作用 修改 Button 对象的回调表；按键事件由 Button 内部 GPIO 中断 + 任务派发
+     */
+    void InitializeButtons() {
         // BOOT 按钮（GPIO0）- 主要交互按键
         boot_button_.OnClick([this]() {
-            if (display_) display_->NotifyUserActivity();  // 记录用户活动
+            if (display_) {
+                display_->NotifyUserActivity();
+                // ShowSystemInfo 滚动动画会占据 chat_status_label_ 并置 showing_system_info_=true，
+                // 导致 DataUpdateTask 跳过 AI 状态更新（"聆听中..."等不显示），
+                // 用户按 BOOT 键后看不到任何视觉反馈，误以为按键没响应。
+                // 因此在进入 ToggleChatState 之前必须先停止滚动、恢复 label 状态。
+                if (display_->IsShowingSystemInfo()) {
+                    ESP_LOGI(TAG, "BOOT 按下：停止系统信息滚动，恢复 AI 状态显示");
+                    DisplayLockGuard lock(display_);
+                    lv_anim_delete(display_->GetChatStatusLabel(), nullptr);
+                    display_->SetShowingSystemInfo(false);
+                    lv_obj_t* label = display_->GetChatStatusLabel();
+                    if (label) {
+                        lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+                        lv_obj_align(label, LV_ALIGN_LEFT_MID, 64 + 20, 0);
+                        lv_label_set_text(label, "");
+                    }
+                }
+            }
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
@@ -125,6 +205,22 @@ private:
     }
 
     // USER 按钮功能实现
+    /**
+     * @brief 长按 USER 键时在 AI 对话区显示并循环滚动设备系统信息
+     * @调用者 user_button_.OnLongPress 回调（行 120）
+     * @回调
+     *   - esp_get_free_heap_size / heap_caps_get_total_size / heap_caps_get_free_size（内存查询）
+     *   - rtc_clk_cpu_freq_get_config（CPU 频率）
+     *   - GetBatteryLevel（自身虚函数，读取电池）
+     *   - Application::GetDeviceState（WiFi 状态推断）
+     *   - esp_timer_get_time（运行时长）
+     *   - display_->SetShowingSystemInfo(true)：通知 DataUpdateTask 暂停 chat_label 更新避免锁竞争
+     *   - LVGL: lv_anim_*（启动"鱼咬尾"无缝循环滚动动画）
+     * @副作用
+     *   - 接管 chat_label，长期占用直到下次 AI 对话覆盖
+     *   - 改变 label 对齐方式为 TOP_LEFT（动画需要绝对定位）
+     * @关键技术 鱼咬尾循环：将文字内容拼接两份[A][A]，滚动 -single_h 后跳回 0，视觉无缝
+     */
     void ShowSystemInfo() {
         // 显示详细系统信息到 AI 对话区（启用多行滚动）
         char info[512];
@@ -237,6 +333,12 @@ private:
                  cpu_freq_mhz, uptime_hours, uptime_mins, heap_percent, psram_percent, battery_level);
     }
 
+    /**
+     * @brief 双击 USER 键时手动刷新所有数据（NTP 时间为主，天气需另由 MCP 触发）
+     * @调用者 user_button_.OnDoubleClick 回调（行 117）
+     * @回调 SensorManager::syncNtpTime；display_->SetChatMessage（提示用户）
+     * @副作用 触发后台 NTP 重新同步；在对话区显示一条提示消息
+     */
     void RefreshAllData() {
         ESP_LOGI(TAG, "手动刷新所有数据...");
         
@@ -254,10 +356,46 @@ private:
         ESP_LOGI(TAG, "数据刷新完成");
     }
 
+    /**
+     * @brief 注册全部 11 个 MCP 工具到 McpServer 单例
+     * @调用者 CustomBoard 构造函数（行 738），构造序列倒数第二步
+     * @回调 McpServer::AddTool（11 次）。每条工具都包含 name + description（给 AI 看的英文+中文触发短语）+ 参数 schema + lambda 回调
+     * @副作用
+     *   - 工具被全局注册，AI 通过 MCP 协议（websocket）即可远程调用
+     *   - 多个工具持有 [this] 捕获，访问 display_ / EnterWifiConfigMode（继承自 WifiBoard）
+     * @工具清单（按出现顺序）
+     *   1) self.system.info     - 查询 CPU/内存/电池/WiFi
+     *   2) self.weather.update  - AI 回写天气数据到屏幕
+     *   3) self.disp.network    - 重新进入配网模式
+     *   4) self.disp.switch     - 切换显示页（toggle/music/weather/pomodoro）
+     *   5) self.pomodoro.start  - 启动番茄钟 + 白噪音
+     *   6) self.pomodoro.stop   - 停止番茄钟
+     *   7) self.pomodoro.status - 查询番茄钟状态
+     *   8) self.pomodoro.pause  - 暂停/恢复番茄钟
+     *   9) self.memo.add        - 添加备忘
+     *   10) self.memo.list      - 列出所有备忘
+     *   11) self.memo.done      - 完成（删除）某条备忘
+     *   12) self.memo.clear     - 清空所有备忘
+     *   （共 12 个，README 说 11 是旧版数字）
+     */
     void InitializeTools() {
         auto& mcp_server = McpServer::GetInstance();
         
-        // ===== 系统信息工具 =====
+        /**
+         * @工具 [1/12] self.system.info
+         * @用途 AI 查询设备运行状态（CPU/内存/电池/WiFi/运行时长），用语音播报
+         * @参数 无
+         * @返回 中文自然语言字符串（约 200 字），AI 可直接朗读
+         * @触发示例 「系统信息」「CPU频率」「内存使用情况」「电量多少」
+         * @数据源
+         *   - esp_get_free_heap_size / heap_caps_get_total_size：SRAM 与 PSRAM 占用
+         *   - rtc_clk_cpu_freq_get_config：CPU 当前频率（MHz）
+         *   - GetBatteryLevel：电池百分比 + 充放电状态（来自 BatterygetPercent + GPIO35）
+         *   - Application::GetDeviceState：判断 WiFi 是否已连接
+         *   - esp_timer_get_time：系统启动后微秒数 → 转小时:分钟
+         * @捕获 [this]：用于调用成员函数 GetBatteryLevel
+         * @无副作用 只读
+         */
         mcp_server.AddTool("self.system.info",
             "Get device system information (CPU, memory, battery, WiFi status).\n"
             "Use when user asks: '系统信息', 'CPU频率', '内存使用情况', '电量多少', 'system status', 'how much RAM'",
@@ -309,7 +447,21 @@ private:
                 return std::string(info);
             });
 
-        // ===== 天气写入工具（由 AI 侧 MCP 查询后回写到设备）=====
+        /**
+         * @工具 [2/12] self.weather.update
+         * @用途 AI 把外部天气 MCP（高德/和风等）查到的天气写入设备屏幕缓存
+         * @参数
+         *   - city (string)        城市中文名，如「苏州」
+         *   - text (string)        天气文本，如「晴」「多云」「小雨」
+         *   - temp (string)        温度数字字符串，无单位，如「5」「-2」「26」
+         *   - update_time (string) 可选，更新时间显示文本
+         * @返回 成功："天气已更新：城市 文本 温度°C"；失败："天气写入失败..."
+         * @触发示例 用户「查苏州天气」→ AI 先调外部天气 → 再调此工具回写设备
+         * @核心调用 WeatherManager::getInstance().updateFromExternal(city, text, temp, update_time)
+         *           内部更新单例缓存 → 触发 LVGL 重绘天气区域（在 data_update_task 下一次 tick 拉取时）
+         * @捕获 无（不需要 this，纯静态访问 WeatherManager 单例）
+         * @副作用 写 WeatherManager 单例字段 + 屏幕异步刷新
+         */
         mcp_server.AddTool("self.weather.update",
             "Write weather data to the device screen cache.\n"
             "Use this after AI gets weather from an external MCP/weather source.\n"
@@ -339,14 +491,38 @@ private:
                 return std::string("天气已更新：") + city + " " + text + " " + temp + "°C";
             });
         
-        // ===== 配网工具 =====
+        /**
+         * @工具 [3/12] self.disp.network
+         * @用途 让设备退出当前 WiFi、重新进入配网模式（BluFi/热点二选一）
+         * @参数 无
+         * @返回 true（恒为真，不阻塞 AI 应答）
+         * @触发示例 「重新配网」「换个 WiFi」「连不上网」
+         * @核心调用 EnterWifiConfigMode()（继承自 WifiBoard 父类，会重启网络栈）
+         * @捕获 [this]：访问继承的 EnterWifiConfigMode 成员
+         * @副作用 断开当前 WiFi → 启动 BluFi/AP → 用户须用手机 App 重新输入凭据
+         */
         mcp_server.AddTool("self.disp.network", "重新配网", PropertyList(),
         [this](const PropertyList&) -> ReturnValue {
             EnterWifiConfigMode();
             return true;
         });
 
-        // ===== 屏幕切换工具（语音可调用）=====
+        /**
+         * @工具 [4/12] self.disp.switch
+         * @用途 切换屏幕显示页（天气页 / 音乐页 / 番茄钟页）
+         * @参数 mode (string)：toggle | music | weather | pomodoro，默认 "toggle"
+         *       toggle = 循环切换三页；其余为指定页
+         * @返回
+         *   - "已切换到音乐页/天气页/番茄钟页"
+         *   - display_ 为空：「显示器未初始化...」
+         *   - mode 非法：「参数 mode 无效...」
+         * @触发示例 「切到音乐页」「打开天气页」「打开番茄钟页面」
+         * @核心调用
+         *   - display_->NotifyUserActivity()  退出省电（5 分钟无操作降频刷新）
+         *   - display_->CycleDisplayMode / SwitchToXxxPage  实际切页
+         * @捕获 [this]：访问 display_ 指针
+         * @副作用 修改 LVGL 当前活动屏幕 + 重置省电计时
+         */
         mcp_server.AddTool(
             "self.disp.switch",
             "Switch display page between weather, music, and pomodoro.\n"
@@ -390,7 +566,23 @@ private:
             }
         );
 
-        // ===== 番茄钟工具 =====
+        // ===== 番茄钟工具组（5/12 ~ 8/12）=====
+        /**
+         * @工具 [5/12] self.pomodoro.start
+         * @用途 启动番茄钟倒计时，并可选播放 SD 卡中的白噪音
+         * @参数
+         *   - minutes (int, 1-120)  倒计时分钟，默认 25（标准番茄钟）
+         *   - white_noise (bool)    是否播 SD 卡 /sdcard/white-noise/ 下的 mp3，默认 true
+         * @返回 "番茄钟已启动：N 分钟倒计时，白噪音已开启/已关闭" 或 "番茄钟启动失败"
+         * @触发示例 「开始番茄钟」「专注25分钟」「倒计时10分钟」
+         * @核心调用
+         *   - PomodoroManager::start(minutes, noise)  启动 FreeRTOS 倒计时任务 + MP3 播放
+         *   - display_->SwitchToPomodoroPage()        启动后自动切到番茄钟页
+         * @捕获 [this]：访问 display_
+         * @异常处理 properties[].value<T>() 用 try/catch 包裹，参数缺失时回退默认值（25 分钟 / 开启白噪音）
+         * @参数夹紧 minutes < 1 → 1，> 120 → 120（防御 AI 误传超大值）
+         * @副作用 PomodoroManager 进入 RUNNING 状态 + Audio 播放线程启动 + 屏幕切页
+         */
         mcp_server.AddTool("self.pomodoro.start",
             "Start a countdown timer with optional white noise from SD card.\n"
             "Use when user says: '开始番茄钟', '专注25分钟', '倒计时10分钟', 'start pomodoro', '番茄工作法'\n"
@@ -431,6 +623,18 @@ private:
                 return std::string("番茄钟启动失败");
             });
 
+        /**
+         * @工具 [6/12] self.pomodoro.stop
+         * @用途 停止当前番茄钟（无论 RUNNING 还是 PAUSED）并停白噪音
+         * @参数 无
+         * @返回 "番茄钟已停止" 或 "番茄钟当前没有在运行"
+         * @触发示例 「停止番茄钟」「结束专注」「不专注了」
+         * @核心调用
+         *   - PomodoroManager::stop()      置位 IDLE，发停止信号给倒计时任务，关音频
+         *   - display_->SwitchToWeatherPage()  自动切回天气页（默认页）
+         * @捕获 [this]：访问 display_
+         * @副作用 PomodoroManager → IDLE + 屏幕切回天气
+         */
         mcp_server.AddTool("self.pomodoro.stop",
             "Stop the current Pomodoro timer and white noise.\n"
             "Use when user says: '停止番茄钟', '结束专注', 'stop pomodoro', '不专注了'",
@@ -449,6 +653,16 @@ private:
                 return std::string("番茄钟已停止");
             });
 
+        /**
+         * @工具 [7/12] self.pomodoro.status
+         * @用途 查询番茄钟当前状态（运行/暂停/空闲、剩余时间、总设定）
+         * @参数 无
+         * @返回 IDLE：「番茄钟当前未运行...」；其他：「番茄钟状态：XX，剩余 MM:SS，共设定 N 分钟」
+         * @触发示例 「番茄钟状态」「还剩多少时间」「专注了多久」
+         * @核心调用 PomodoroManager 单例的 getState/getStateText/getRemainingTimeStr/getMinutes 只读 getter
+         * @捕获 无
+         * @无副作用 只读
+         */
         mcp_server.AddTool("self.pomodoro.status",
             "Get current Pomodoro timer status.\n"
             "Use when user asks: '番茄钟状态', '还剩多少时间', '专注了多久', 'pomodoro status'",
@@ -469,6 +683,16 @@ private:
                 return std::string(buf);
             });
 
+        /**
+         * @工具 [8/12] self.pomodoro.pause
+         * @用途 切换番茄钟暂停 / 恢复（开关式）
+         * @参数 无
+         * @返回 RUNNING→PAUSED：「番茄钟已暂停」；PAUSED→RUNNING：「番茄钟已恢复」；IDLE：「无法暂停」
+         * @触发示例 「暂停番茄钟」「继续番茄钟」
+         * @核心调用 PomodoroManager::togglePause()  根据当前状态翻转
+         * @捕获 无（不需要 display_，不切页）
+         * @副作用 倒计时定时器暂停/恢复 + 白噪音音频暂停/恢复
+         */
         mcp_server.AddTool("self.pomodoro.pause",
             "Pause or resume the current Pomodoro timer.\n"
             "Use when user says: '暂停番茄钟', '继续番茄钟', 'pause pomodoro', 'resume'",
@@ -485,10 +709,28 @@ private:
                     : std::string("番茄钟已恢复");
             });
 
-        // ===== 备忘录工具（多条列表模式）=====
-        // NVS key "items" 存储 JSON 数组: [{"t":"15:00","c":"开会"}, ...]
+        // ===== 备忘录工具组（9/12 ~ 12/12）=====
+        // NVS namespace="memo" 中 key="items" 持久化为 JSON 数组：[{"t":"15:00","c":"开会"}, ...]
+        // 上电后 data_update_task 周期扫描，到点的条目触发 PopupMemo 弹窗并自动删除
 
-        // 添加一条备忘
+        /**
+         * @工具 [9/12] self.memo.add
+         * @用途 添加一条备忘 / 提醒 / 待办，持久化到 NVS，并立即在屏幕右下区显示
+         * @参数
+         *   - content (string)  备忘内容（建议 ≤8 个中文字以适配小屏幕）
+         *   - time (string)     HH:MM 24 小时制，如 "07:30" "15:00"；空串表示无时间标记
+         * @返回 成功："已添加备忘: 内容（共 N 条）"；时间格式错："时间格式无效..."；满 10 条："备忘已满..."
+         * @触发示例 「提醒我下午 3 点开会」「记住买牛奶」「待办写周报」
+         * @重要约束 AI 必须自己把「5 分钟后」「明天」转成 HH:MM 后再调用，本工具只接受严格时间格式
+         * @核心流程
+         *   1) IsValidMemoTimeLabel 校验时间字符串
+         *   2) Settings("memo", false).GetString("items", "[]") 读现有 JSON 数组
+         *   3) cJSON_Parse → 检查 ≤10 条 → cJSON_AddItemToArray 追加 {"t":..., "c":...}
+         *   4) Settings("memo", true).SetString 写回 NVS（true=可写）
+         *   5) display_->RefreshMemoDisplay() 立即刷屏
+         * @捕获 [this]：访问 IsValidMemoTimeLabel + display_
+         * @副作用 NVS 写入 + LVGL 区域重绘
+         */
         mcp_server.AddTool("self.memo.add",
             "Add a memo / reminder / todo item. It will be persistently displayed on the device screen and survives reboot.\n"
             "Use when user says: '提醒我下午3点开会', '记住买牛奶', '待办写周报'\n"
@@ -549,7 +791,16 @@ private:
                 return std::string("已添加备忘: ") + content + "（共" + std::to_string(count) + "条）";
             });
 
-        // 查看所有备忘
+        /**
+         * @工具 [10/12] self.memo.list
+         * @用途 列出 NVS 中所有备忘，带 1-based 序号供后续 self.memo.done 引用
+         * @参数 无
+         * @返回 "当前备忘列表:\n1. [HH:MM] 内容\n2. ..."；空列表："当前没有备忘"
+         * @触发示例 「我有什么待办」「看看备忘」
+         * @核心流程 Settings("memo", false).GetString → cJSON_Parse → 遍历 t/c 字段拼字符串
+         * @捕获 无（只读 NVS，不需要 this）
+         * @无副作用 只读 NVS
+         */
         mcp_server.AddTool("self.memo.list",
             "List all memos / reminders / todos on the device.\n"
             "Use when user asks: '我有什么待办', '看看备忘', 'what do I need to do'",
@@ -583,7 +834,21 @@ private:
                 return result;
             });
 
-        // 完成/删除某条备忘（按序号）
+        /**
+         * @工具 [11/12] self.memo.done
+         * @用途 按序号完成 / 删除某条备忘
+         * @参数 index (int, 1-10)  1-based 序号；建议 AI 不确定时先调 self.memo.list 拿序号
+         * @返回 成功："已完成: 内容"；序号越界："序号无效，当前共 N 条备忘"
+         * @触发示例 「第一条做完了」「删掉买牛奶那条」
+         * @核心流程
+         *   1) 读 NVS → cJSON_Parse
+         *   2) 范围检查 1 ≤ idx ≤ count
+         *   3) 取出待删条目的 c 字段（用于回执反馈）
+         *   4) cJSON_DeleteItemFromArray(idx-1)
+         *   5) 写回 NVS + display_->RefreshMemoDisplay()
+         * @捕获 [this]：访问 display_
+         * @副作用 NVS 写入 + 屏幕刷新
+         */
         mcp_server.AddTool("self.memo.done",
             "Mark a memo as done and remove it from the list.\n"
             "Use when user says: '第一条做完了', '删掉买牛奶那条', '完成了开会'\n"
@@ -632,7 +897,17 @@ private:
                 return std::string("已完成: ") + removed_text;
             });
 
-        // 清空所有备忘
+        /**
+         * @工具 [12/12] self.memo.clear
+         * @用途 清空全部备忘（一次性删除 NVS 中 "items" 键）
+         * @参数 无
+         * @返回 "所有备忘已清除"（无论原本是否有备忘）
+         * @触发示例 「清空备忘」「全部删掉」
+         * @核心调用 Settings("memo", true).EraseKey("items")  直接擦除 NVS key
+         * @捕获 [this]：访问 display_
+         * @副作用 NVS 删 key + 屏幕刷新（备忘区将显示空）
+         * @注意 不可逆。AI 应在用户明确说"清空"时才调用，不要因模糊词触发
+         */
         mcp_server.AddTool("self.memo.clear",
             "Clear ALL memos / reminders / todos.\n"
             "Use when user says: '清空备忘', '全部删掉', 'clear all memos'",
@@ -648,6 +923,16 @@ private:
             });
     }
 
+    /**
+     * @brief 创建 CustomLcdDisplay 对象（RLCD 400×300 单色屏，SPI 接口）并启动后台数据更新任务
+     * @调用者 CustomBoard 构造函数（行 739），构造序列最后一步
+     * @回调
+     *   - new CustomLcdDisplay(...)：构造内部完成 SPI 总线 + 面板 + LVGL 初始化 + UI 控件创建
+     *   - display_->StartDataUpdateTask()：启动 FreeRTOS 后台任务（stack=8192 prio=2），周期更新天气/时间/传感器
+     * @副作用
+     *   - 分配显示对象到堆，赋值给 display_ 成员
+     *   - 申请 SPI 总线、LVGL 缓冲区（PSRAM）、后台任务栈
+     */
     void InitializeLcdDisplay() {
         spi_display_config_t spi_config = {};
         spi_config.mosi = RLCD_MOSI_PIN;
@@ -663,6 +948,16 @@ private:
         display_->StartDataUpdateTask();
     }
 
+    /**
+     * @brief 读取电池电压一次（mV，已乘 3 倍分压补偿）
+     * @return 电池电压（毫伏）。失败返回 0
+     * @调用者 BatterygetPercent（同文件，循环采样 10 次）
+     * @回调 ESP-IDF: adc_oneshot_read / adc_cali_raw_to_voltage
+     * @副作用
+     *   - 首次调用时初始化 ADC1 + 曲线拟合校准（懒加载，使用静态变量）
+     *   - 该静态资源在进程生命周期中持有，不释放
+     * @硬件 ADC1_CHANNEL_3（GPIO4），衰减 12dB（量程 ~0~3.1V），分压电阻比 1:3
+     */
     uint16_t BatterygetVoltage(void) {
         static bool initialized = false;
         static adc_oneshot_unit_handle_t adc_handle;
@@ -701,6 +996,19 @@ private:
         return 0;
     }
 
+    /**
+     * @brief 计算电池电量百分比（含 10 次平均 + EMA 平滑 + 抛物线映射）
+     * @return 0-100 范围内的百分比
+     * @调用者 GetBatteryLevel 虚函数（行末覆盖，被 Application 框架定期查询）
+     * @回调 BatterygetVoltage（同文件，连续 10 次）
+     * @副作用
+     *   - 维护静态 EMA 状态变量（首次调用初始化）
+     * @算法
+     *   1) 10 次连续采样取算术平均，抑制瞬时噪声
+     *   2) EMA 滤波：alpha=0.1，约 10 次采样追平真实变化，消除波动
+     *   3) 抛物线拟合：percent = (-V² + 9016V - 19,189,000) / 10000，clip 到 [0,100]
+     *      （拟合点参考：4200mV→100%, 3700mV→50%, 3300mV→0%）
+     */
     uint8_t BatterygetPercent() {
         // 静态变量用于指数移动平均（EMA）滤波，消除 ADC 噪声导致的电量漂移
         static float ema_voltage = 0.0f;    // 平滑后的电压值
@@ -730,6 +1038,20 @@ private:
     }
 
 public:
+    /**
+     * @brief CustomBoard 构造函数：板上所有外设的统一初始化入口
+     * @调用者 Board::GetInstance（main.cc 通过 DECLARE_BOARD 宏生成的工厂函数）
+     * @回调 顺序调用 6 个 Initialize* 私有方法（顺序敏感，I2C 必须最先）
+     * @副作用 完成全部硬件 + UI + MCP 工具初始化
+     * @初始化顺序（顺序敏感，不可调换）
+     *   1) InitializeI2c       - I2C 总线（后续传感器/Codec 依赖）
+     *   2) InitializeSensors   - SHTC3 + PCF85063 + NTP（依赖 I2C）
+     *   3) InitializeSdcard    - SD 卡（独立外设）
+     *   4) InitializeButtons   - 按键回调（依赖 display_? 不，回调里做 nullptr 检查）
+     *   5) InitializeTools     - MCP 工具注册（依赖 display_? 同上 nullptr 检查）
+     *   6) InitializeLcdDisplay - LCD + UI + 数据更新任务（最后启动）
+     * @注 Audio Codec 在 GetAudioCodec 第一次被调用时才懒加载
+     */
     CustomBoard() : boot_button_(BOOT_BUTTON_GPIO), user_button_(USER_BUTTON_GPIO) {    
         InitializeI2c();
         InitializeSensors();  // 在 I2C 初始化后立即初始化传感器
@@ -739,6 +1061,13 @@ public:
         InitializeLcdDisplay();
     }
 
+    /**
+     * @brief 返回板上音频编解码器对象（懒加载，首次调用时构造 BoxAudioCodec）
+     * @return AudioCodec* 单例指针，永不为 NULL
+     * @调用者 Application::Start → AudioService::Initialize（main/audio/audio_service.cc）
+     * @回调 BoxAudioCodec 构造（封装 ES8311 解码 + ES7210 编码 + I2S MCLK/BCLK/WS/DOUT/DIN + PA 引脚）
+     * @副作用 首次调用申请 I2S DMA 缓冲、初始化 ES8311/ES7210 寄存器；后续返回同一指针
+     */
     virtual AudioCodec* GetAudioCodec() override {
         static BoxAudioCodec audio_codec(
             i2c_bus_, 
@@ -756,10 +1085,28 @@ public:
         return &audio_codec;
     }
 
+    /**
+     * @brief 返回板上显示对象指针
+     * @return Display* 实际为 CustomLcdDisplay*；若 InitializeLcdDisplay 未执行则为 NULL
+     * @调用者 Application 框架（StateMachine 用于发送状态/聊天消息到屏幕）
+     * @回调 无（直接返回成员）
+     * @副作用 无
+     */
     virtual Display* GetDisplay() override {
         return display_;
     }
 
+    /**
+     * @brief 返回当前电池电量与充放电状态
+     * @param level [out] 电量百分比 0-100
+     * @param charging [out] 是否充电中（当前实现恒为 false，硬件无充电检测线）
+     * @param discharging [out] 是否放电中（恒为 !charging = true）
+     * @return true=数据有效（永远返回 true）
+     * @调用者 Application 框架定期查询；ShowSystemInfo 也调用
+     * @回调 BatterygetPercent
+     * @副作用 触发 10 次 ADC 采样
+     * @TODO 当前缺少充电状态检测引脚，charging 永远为 false
+     */
     virtual bool GetBatteryLevel(int &level, bool& charging, bool& discharging) override {
         charging = false;
         discharging = !charging;
@@ -768,4 +1115,20 @@ public:
     }
 };
 
+/**
+ * @brief 注册 CustomBoard 为本固件的板级实现
+ *
+ * 展开后等价于：
+ *   Board* Board::create_board() { static CustomBoard board; return &board; }
+ *
+ * @调用流程
+ *   app_main (main.cc:50)
+ *     → Application::GetInstance().Start()
+ *       → Board::GetInstance() → create_board() → 首次调用时构造 CustomBoard 单例
+ *
+ * @如何被发现
+ *   - main/CMakeLists.txt 根据 Kconfig 配置 BOARD_TYPE_WAVESHARE_S3_RLCD_4_2 决定编译此 .cc
+ *   - main/Kconfig.projbuild 提供 menuconfig 中的板子选项
+ *   - main/board.h 声明 DECLARE_BOARD 宏的展开模板
+ */
 DECLARE_BOARD(CustomBoard);
