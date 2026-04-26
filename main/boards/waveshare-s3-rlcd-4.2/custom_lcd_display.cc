@@ -148,6 +148,7 @@ CustomLcdDisplay::CustomLcdDisplay(
     SetupWeatherUI();    // 天气页：时钟 + 日历 + 天气 + AI 对话 + 备忘录
     SetupMusicUI();      // 音乐页：唱片封面 + 歌曲信息 + 播放状态
     SetupPomodoroUI();   // 番茄钟页：倒计时 + 进度条 + 状态文字
+    SetupStockUI();      // 股票页：证券行情表格（5 支股票实时数据）
 
     // 标记 UI 初始化完成
     // 基类 LcdDisplay 的 SetStatus/SetChatMessage 等函数会检查此标志
@@ -249,6 +250,8 @@ void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
     
     // 停止系统信息滚动，恢复 DataUpdateTask 更新
     SetShowingSystemInfo(false);
+    // 新消息到来，清除保存的旧文字（不需要恢复了）
+    saved_chat_text_.clear();
     
     // 设置文本内容
     lv_label_set_text(chat_status_label_, content);
@@ -406,12 +409,11 @@ void CustomLcdDisplay::SetTheme(Theme* theme) {
 }
 
 void CustomLcdDisplay::ApplyDisplayMode() {
-    // 先隐藏所有页面
     if (weather_page_) lv_obj_add_flag(weather_page_, LV_OBJ_FLAG_HIDDEN);
     if (music_page_) lv_obj_add_flag(music_page_, LV_OBJ_FLAG_HIDDEN);
     if (pomodoro_page_) lv_obj_add_flag(pomodoro_page_, LV_OBJ_FLAG_HIDDEN);
+    if (stock_page_) lv_obj_add_flag(stock_page_, LV_OBJ_FLAG_HIDDEN);
 
-    // 显示当前页面
     switch (display_mode_) {
         case MODE_WEATHER:
             if (weather_page_) lv_obj_remove_flag(weather_page_, LV_OBJ_FLAG_HIDDEN);
@@ -422,16 +424,19 @@ void CustomLcdDisplay::ApplyDisplayMode() {
         case MODE_POMODORO:
             if (pomodoro_page_) lv_obj_remove_flag(pomodoro_page_, LV_OBJ_FLAG_HIDDEN);
             break;
+        case MODE_STOCK:
+            if (stock_page_) lv_obj_remove_flag(stock_page_, LV_OBJ_FLAG_HIDDEN);
+            break;
     }
 }
 
 void CustomLcdDisplay::CycleDisplayMode() {
     DisplayLockGuard lock(this);
-    // 三页循环：天气 → 音乐 → 番茄钟 → 天气
     switch (display_mode_) {
         case MODE_WEATHER:  display_mode_ = MODE_MUSIC; break;
         case MODE_MUSIC:    display_mode_ = MODE_POMODORO; break;
-        case MODE_POMODORO: display_mode_ = MODE_WEATHER; break;
+        case MODE_POMODORO: display_mode_ = MODE_STOCK; break;
+        case MODE_STOCK:    display_mode_ = MODE_WEATHER; break;
     }
     ApplyDisplayMode();
     const char* name = "未知";
@@ -439,6 +444,7 @@ void CustomLcdDisplay::CycleDisplayMode() {
         case MODE_WEATHER:  name = "天气页"; break;
         case MODE_MUSIC:    name = "音乐页"; break;
         case MODE_POMODORO: name = "番茄钟"; break;
+        case MODE_STOCK:    name = "股票页"; break;
     }
     ESP_LOGI(TAG, "页面切换: %s", name);
 }
@@ -545,6 +551,15 @@ void CustomLcdDisplay::SwitchToPomodoroPage() {
         display_mode_ = MODE_POMODORO;
         ApplyDisplayMode();
         ESP_LOGI(TAG, "自动切换到番茄钟页");
+    }
+}
+
+void CustomLcdDisplay::SwitchToStockPage() {
+    DisplayLockGuard lock(this);
+    if (display_mode_ != MODE_STOCK) {
+        display_mode_ = MODE_STOCK;
+        ApplyDisplayMode();
+        ESP_LOGI(TAG, "自动切换到股票页");
     }
 }
 

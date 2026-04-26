@@ -162,7 +162,7 @@ private:
                 // 用户按 BOOT 键后看不到任何视觉反馈，误以为按键没响应。
                 // 因此在进入 ToggleChatState 之前必须先停止滚动、恢复 label 状态。
                 if (display_->IsShowingSystemInfo()) {
-                    ESP_LOGI(TAG, "BOOT 按下：停止系统信息滚动，恢复 AI 状态显示");
+                    ESP_LOGI(TAG, "BOOT 按下：停止系统信息滚动，恢复之前的显示内容");
                     DisplayLockGuard lock(display_);
                     lv_anim_delete(display_->GetChatStatusLabel(), nullptr);
                     display_->SetShowingSystemInfo(false);
@@ -170,7 +170,9 @@ private:
                     if (label) {
                         lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
                         lv_obj_align(label, LV_ALIGN_LEFT_MID, 64 + 20, 0);
-                        lv_label_set_text(label, "");
+                        // 恢复进入 ShowSystemInfo 前保存的文字（配网信息、AI对话等）
+                        const std::string& saved = display_->GetSavedChatText();
+                        lv_label_set_text(label, saved.c_str());
                     }
                 }
             }
@@ -189,6 +191,15 @@ private:
                 display_->CycleDisplayMode();
             }
             ESP_LOGI(TAG, "USER 按钮单击：切换天气页/音乐页");
+        });
+
+        // BOOT 按钮双击：直达股票行情页面（快捷入口）
+        boot_button_.OnDoubleClick([this]() {
+            if (display_) {
+                display_->NotifyUserActivity();
+                display_->SwitchToStockPage();
+                ESP_LOGI(TAG, "BOOT 双击：切换到股票页");
+            }
         });
 
         user_button_.OnDoubleClick([this]() {
@@ -280,6 +291,11 @@ private:
         if (display_) {
             lv_obj_t* chat_label = display_->GetChatStatusLabel();
             if (chat_label) {
+                // 保存当前 chat_status_label_ 的文字，退出时恢复
+                // 避免配网/AI对话等信息在退出系统信息后丢失
+                const char* cur = lv_label_get_text(chat_label);
+                display_->SaveChatText(cur ? cur : "");
+                
                 // 暂停 DataUpdateTask 对 UI 的更新（避免锁竞争导致 watchdog 超时）
                 display_->SetShowingSystemInfo(true);
                 

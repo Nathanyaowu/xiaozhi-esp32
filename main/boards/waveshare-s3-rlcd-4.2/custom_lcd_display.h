@@ -5,6 +5,7 @@
 #include <driver/gpio.h>
 #include "lcd_display.h"
 #include "rlcd_driver.h"
+#include "stock_data.h"
 #include "managers/sensor_manager.h"
 #include "managers/weather_manager.h"
 
@@ -34,6 +35,7 @@ private:
         MODE_WEATHER = 0,
         MODE_MUSIC = 1,
         MODE_POMODORO = 2,
+        MODE_STOCK = 3,
     };
     DisplayMode display_mode_ = MODE_WEATHER;
 
@@ -42,6 +44,7 @@ private:
     lv_obj_t *weather_page_ = nullptr;
     lv_obj_t *music_page_ = nullptr;
     lv_obj_t *pomodoro_page_ = nullptr;
+    lv_obj_t *stock_page_ = nullptr;
 
     // ===== 天气站 UI 组件 =====
     // 状态栏（右上角浮动胶囊）
@@ -90,6 +93,22 @@ private:
     lv_obj_t *pomo_battery_icon_img_ = nullptr;  // 状态栏电池图标
     lv_obj_t *pomo_battery_pct_label_ = nullptr; // 状态栏电量文字
 
+    // ===== 股票页 UI 组件 =====
+    lv_obj_t *stock_name_labels_[MAX_STOCKS] = {};     // 股票名称（每行一个）
+    lv_obj_t *stock_price_labels_[MAX_STOCKS] = {};    // 现价
+    lv_obj_t *stock_change_labels_[MAX_STOCKS] = {};   // 涨跌幅
+    lv_obj_t *stock_range_labels_[MAX_STOCKS] = {};    // 最高/最低
+    lv_obj_t *stock_update_label_ = nullptr;           // 底部更新时间
+    lv_obj_t *stock_time_label_ = nullptr;             // 顶部时钟
+    lv_obj_t *stock_sensor_label_ = nullptr;           // 顶部温湿度
+    lv_obj_t *stock_wifi_icon_img_ = nullptr;          // 状态栏 WiFi 图标
+    lv_obj_t *stock_battery_icon_img_ = nullptr;       // 状态栏电池图标
+    lv_obj_t *stock_battery_pct_label_ = nullptr;      // 状态栏电量文字
+
+    // 股票数据缓存（由 DataUpdateTask 更新）
+    StockData stock_data_cache_[MAX_STOCKS] = {};
+    bool stock_data_valid_ = false;
+
     // 图片图标（不能用基类的 label，因为我们用 lv_image 而不是 Font Awesome 文字）
     lv_obj_t *wifi_icon_img_ = nullptr;
     lv_obj_t *battery_icon_img_ = nullptr;
@@ -103,6 +122,10 @@ private:
     
     // 系统信息滚动标志（为 true 时暂停 DataUpdateTask 更新，避免锁竞争）
     std::atomic<bool> showing_system_info_{false};
+    
+    // 进入 ShowSystemInfo 前保存的 chat_status_label_ 文字，退出时恢复
+    // 解决：配网/AI对话等状态下，进入系统信息再退出后原有信息丢失的问题
+    std::string saved_chat_text_;
     
     // 省电模式：5 分钟无活动后降低刷新频率（1秒 → 5秒）
     std::atomic<bool> power_saving_{false};     // 是否处于省电模式
@@ -124,6 +147,7 @@ private:
     void SetupWeatherUI();
     void SetupMusicUI();
     void SetupPomodoroUI();
+    void SetupStockUI();
     void ApplyDisplayMode();
     
     // 备忘录
@@ -147,6 +171,8 @@ public:
     // 系统信息滚动控制（供 CustomBoard 设置标志，避免 DataUpdateTask 锁竞争）
     void SetShowingSystemInfo(bool showing) { showing_system_info_ = showing; }
     bool IsShowingSystemInfo() const { return showing_system_info_; }
+    void SaveChatText(const char* text) { saved_chat_text_ = text ? text : ""; }
+    const std::string& GetSavedChatText() const { return saved_chat_text_; }
     
     // 省电模式：记录用户活动，唤醒省电模式
     void NotifyUserActivity();
@@ -178,6 +204,11 @@ public:
     bool IsMusicMode() const { return display_mode_ == MODE_MUSIC; }
     bool IsPomodoroMode() const { return display_mode_ == MODE_POMODORO; }
     void SwitchToPomodoroPage();
+    void SwitchToStockPage();
+
+    // 股票页面
+    void UpdateStockDisplay(const StockData* data, int count);
+    bool IsStockMode() const { return display_mode_ == MODE_STOCK; }
 
     // 番茄钟 UI 更新方法
     void UpdatePomodoroDisplay(const char* state_text, const char* countdown_text,

@@ -26,6 +26,7 @@
 #include "managers/sensor_manager.h"
 #include "managers/weather_manager.h"
 #include "managers/pomodoro_manager.h"
+#include "stock_data.h"
 #include "secret_config.h"
 
 // 声明状态栏图标（DataUpdateTask 需要更新图标）
@@ -48,7 +49,7 @@ void CustomLcdDisplay::StartDataUpdateTask() {
     
     // 栈从 16KB 下调到 8KB，给音频/MQTT 留更多 SRAM 余量
     // 优先级保持较低，避免与语音收发实时链路抢占 CPU
-    xTaskCreate(DataUpdateTask, "weather_ui_update", 8192, this, 2, &update_task_handle_);
+    xTaskCreate(DataUpdateTask, "weather_ui_update", 12288, this, 2, &update_task_handle_);
 }
 
 void CustomLcdDisplay::DataUpdateTask(void *arg) {
@@ -74,6 +75,10 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
     
     // 记录进入 idle 的时刻，用于"连续 idle 足够久才发网络请求"的保护
     uint32_t idle_since_ms = 0;
+    
+    // 股票数据定时获取（30 秒盘中，5 分钟盘后）
+    uint32_t last_stock_fetch_ms = 0;
+    const uint32_t STOCK_FETCH_INTERVAL = 30 * 1000;
     
     // 初始化活动时间（系统启动算一次活动）
     self->last_activity_ms_ = xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -312,6 +317,7 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                         if (self->sensor_label_) lv_label_set_text(self->sensor_label_, buf);
                         if (self->music_sensor_label_) lv_label_set_text(self->music_sensor_label_, buf);
                         if (self->pomo_sensor_label_) lv_label_set_text(self->pomo_sensor_label_, buf);
+                        if (self->stock_sensor_label_) lv_label_set_text(self->stock_sensor_label_, buf);
                         self->last_temp_ = sd.temperature;
                         self->last_humi_ = sd.humidity;
                     }
@@ -372,6 +378,9 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                         if (self->pomo_battery_icon_img_) {
                             lv_image_set_src(self->pomo_battery_icon_img_, icon_src);
                         }
+                        if (self->stock_battery_icon_img_) {
+                            lv_image_set_src(self->stock_battery_icon_img_, icon_src);
+                        }
                         last_icon_mode = icon_mode;
                     }
 
@@ -381,6 +390,7 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                         lv_label_set_text(self->battery_pct_label_, bat_buf);
                         if (self->music_battery_pct_label_) lv_label_set_text(self->music_battery_pct_label_, bat_buf);
                         if (self->pomo_battery_pct_label_) lv_label_set_text(self->pomo_battery_pct_label_, bat_buf);
+                        if (self->stock_battery_pct_label_) lv_label_set_text(self->stock_battery_pct_label_, bat_buf);
                         last_battery_level = cached_battery_level;
                     }
 
@@ -419,6 +429,9 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                     }
                     if (self->pomo_wifi_icon_img_) {
                         lv_image_set_src(self->pomo_wifi_icon_img_, wifi_src);
+                    }
+                    if (self->stock_wifi_icon_img_) {
+                        lv_image_set_src(self->stock_wifi_icon_img_, wifi_src);
                     }
                     last_wifi_state = ds;
                 }
@@ -537,6 +550,38 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                         lv_label_set_text(self->pomo_chat_status_label_, pomo_status_buf);
                     }
                 }
+            }
+        }
+
+        // ===== 股票数据获取（30 秒一次，仅在网络连接且非音频会话时）=====
+        if (network_connected && !in_audio_session &&
+            (last_stock_fetch_ms == 0 || (now_ms - last_stock_fetch_ms >= STOCK_FETCH_INTERVAL))) {
+            StockData results[MAX_STOCKS] = {};
+            int fetched = FetchStockData(kDefaultStocks, results, MAX_STOCKS);
+            if (fetched > 0) {
+                memcpy(self->stock_data_cache_, results, sizeof(results));
+                self->stock_data_valid_ = true;
+                self->UpdateStockDisplay(results, MAX_STOCKS);
+                // 同步更新股票页的时钟和温湿度（如果在股票页）
+                {
+                    DisplayLockGuard stock_lock(self);
+                    if (self->stock_time_label_) {
+                        char tbuf[16];
+                        strftime(tbuf, sizeof(tbuf), "%H:%M", &timeinfo);
+                        lv_label_set_text(self->stock_time_label_, tbuf);
+                    }
+                }
+            }
+            last_stock_fetch_ms = now_ms;
+        }
+
+        // ===== 股票页状态栏同步（时钟/温湿度，每分钟）=====
+        if (minute_changed && !self->showing_system_info_) {
+            DisplayLockGuard lock(self);
+            if (self->stock_time_label_) {
+                char tbuf[16];
+                strftime(tbuf, sizeof(tbuf), "%H:%M", &timeinfo);
+                lv_label_set_text(self->stock_time_label_, tbuf);
             }
         }
 
