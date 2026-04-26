@@ -18,6 +18,10 @@ LV_FONT_DECLARE(font_puhui_14_1);
 LV_IMAGE_DECLARE(ui_img_wifi);
 LV_IMAGE_DECLARE(ui_img_wifi_off);
 LV_IMAGE_DECLARE(ui_img_battery_full);
+LV_IMAGE_DECLARE(ui_img_speaker_off);
+LV_IMAGE_DECLARE(ui_img_speaker_low);
+LV_IMAGE_DECLARE(ui_img_speaker_medium);
+LV_IMAGE_DECLARE(ui_img_speaker_full);
 
 static const char *TAG = "StockUI";
 
@@ -43,7 +47,7 @@ void CustomLcdDisplay::SetupStockUI() {
 
     // ===== 状态栏（右上角白底胶囊，与天气页一致）=====
     lv_obj_t *status_bar = lv_obj_create(screen);
-    lv_obj_set_size(status_bar, 115, 28);
+    lv_obj_set_size(status_bar, 145, 28);
     lv_obj_set_style_bg_opa(status_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(status_bar, lv_color_white(), 0);
     lv_obj_set_style_border_width(status_bar, 0, 0);
@@ -57,7 +61,9 @@ void CustomLcdDisplay::SetupStockUI() {
     lv_obj_set_flex_align(status_bar, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status_bar, 5, 0);
 
-    stock_wifi_icon_img_ = lv_image_create(status_bar);
+    stock_speaker_icon_img_ = lv_image_create(status_bar);
+lv_image_set_src(stock_speaker_icon_img_, &ui_img_speaker_medium);
+stock_wifi_icon_img_ = lv_image_create(status_bar);
     lv_image_set_src(stock_wifi_icon_img_, &ui_img_wifi_off);
 
     stock_battery_icon_img_ = lv_image_create(status_bar);

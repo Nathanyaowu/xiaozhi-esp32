@@ -35,6 +35,10 @@ LV_FONT_DECLARE(font_puhui_14_1);    // 14px 小字体
 LV_IMAGE_DECLARE(ui_img_wifi);
 LV_IMAGE_DECLARE(ui_img_wifi_off);
 LV_IMAGE_DECLARE(ui_img_battery_full);
+LV_IMAGE_DECLARE(ui_img_speaker_off);
+LV_IMAGE_DECLARE(ui_img_speaker_low);
+LV_IMAGE_DECLARE(ui_img_speaker_medium);
+LV_IMAGE_DECLARE(ui_img_speaker_full);
 
 static const char *TAG = "MusicUI";
 
@@ -87,7 +91,7 @@ void CustomLcdDisplay::SetupMusicUI() {
 
     // 右上角状态栏胶囊
     lv_obj_t *status_bar = lv_obj_create(page);
-    lv_obj_set_size(status_bar, 115, 28);
+    lv_obj_set_size(status_bar, 145, 28);
     lv_obj_set_style_bg_opa(status_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(status_bar, lv_color_white(), 0);
     lv_obj_set_style_border_width(status_bar, 0, 0);
@@ -101,7 +105,9 @@ void CustomLcdDisplay::SetupMusicUI() {
     lv_obj_set_flex_flow(status_bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(status_bar, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    music_wifi_icon_img_ = lv_image_create(status_bar);
+    music_speaker_icon_img_ = lv_image_create(status_bar);
+lv_image_set_src(music_speaker_icon_img_, &ui_img_speaker_medium);
+music_wifi_icon_img_ = lv_image_create(status_bar);
     lv_image_set_src(music_wifi_icon_img_, &ui_img_wifi_off);
     music_battery_icon_img_ = lv_image_create(status_bar);
     lv_image_set_src(music_battery_icon_img_, &ui_img_battery_full);

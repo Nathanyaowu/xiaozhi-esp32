@@ -30,6 +30,10 @@ LV_IMAGE_DECLARE(ui_img_battery_full);
 LV_IMAGE_DECLARE(ui_img_battery_medium);
 LV_IMAGE_DECLARE(ui_img_battery_low);
 LV_IMAGE_DECLARE(ui_img_battery_charging);
+LV_IMAGE_DECLARE(ui_img_speaker_off);
+LV_IMAGE_DECLARE(ui_img_speaker_low);
+LV_IMAGE_DECLARE(ui_img_speaker_medium);
+LV_IMAGE_DECLARE(ui_img_speaker_full);
 
 static const char *TAG = "WeatherUI";
 
@@ -58,7 +62,7 @@ void CustomLcdDisplay::SetupWeatherUI() {
 
     // ===== 状态栏（右上角白底胶囊）=====
     lv_obj_t *status_bar = lv_obj_create(screen);
-    lv_obj_set_size(status_bar, 115, 28);
+    lv_obj_set_size(status_bar, 145, 28);
     lv_obj_set_style_bg_opa(status_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(status_bar, lv_color_white(), 0);
     lv_obj_set_style_border_width(status_bar, 0, 0);
@@ -71,6 +75,10 @@ void CustomLcdDisplay::SetupWeatherUI() {
     lv_obj_set_flex_flow(status_bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(status_bar, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status_bar, 5, 0);
+
+    // 音量图标
+    speaker_icon_img_ = lv_image_create(status_bar);
+    lv_image_set_src(speaker_icon_img_, &ui_img_speaker_medium);
 
     // WiFi 图标（我们自己的图片图标，不给基类用）
     wifi_icon_img_ = lv_image_create(status_bar);

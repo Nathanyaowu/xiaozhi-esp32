@@ -37,6 +37,10 @@ LV_IMAGE_DECLARE(ui_img_battery_full);
 LV_IMAGE_DECLARE(ui_img_battery_medium);
 LV_IMAGE_DECLARE(ui_img_battery_low);
 LV_IMAGE_DECLARE(ui_img_battery_charging);
+LV_IMAGE_DECLARE(ui_img_speaker_off);
+LV_IMAGE_DECLARE(ui_img_speaker_low);
+LV_IMAGE_DECLARE(ui_img_speaker_medium);
+LV_IMAGE_DECLARE(ui_img_speaker_full);
 
 static const char *TAG = "DataUpdate";
 
@@ -435,6 +439,30 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                     }
                     last_wifi_state = ds;
                 }
+            }
+
+            // 5b. 音量图标更新
+            {
+                auto* codec = Board::GetInstance().GetAudioCodec();
+                int vol = codec ? codec->output_volume() : 50;
+                const lv_image_dsc_t *spk_src;
+                if (vol == 0) {
+                    spk_src = &ui_img_speaker_off;
+                } else if (vol <= 33) {
+                    spk_src = &ui_img_speaker_low;
+                } else if (vol <= 66) {
+                    spk_src = &ui_img_speaker_medium;
+                } else {
+                    spk_src = &ui_img_speaker_full;
+                }
+                if (self->speaker_icon_img_)
+                    lv_image_set_src(self->speaker_icon_img_, spk_src);
+                if (self->music_speaker_icon_img_)
+                    lv_image_set_src(self->music_speaker_icon_img_, spk_src);
+                if (self->pomo_speaker_icon_img_)
+                    lv_image_set_src(self->pomo_speaker_icon_img_, spk_src);
+                if (self->stock_speaker_icon_img_)
+                    lv_image_set_src(self->stock_speaker_icon_img_, spk_src);
             }
 
             // 6. AI 状态更新

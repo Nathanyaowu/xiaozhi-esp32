@@ -92,6 +92,7 @@ private:
     lv_obj_t *pomo_wifi_icon_img_ = nullptr;     // 状态栏 WiFi 图标
     lv_obj_t *pomo_battery_icon_img_ = nullptr;  // 状态栏电池图标
     lv_obj_t *pomo_battery_pct_label_ = nullptr; // 状态栏电量文字
+    lv_obj_t *pomo_speaker_icon_img_ = nullptr;  // 状态栏音量图标
 
     // ===== 股票页 UI 组件 =====
     lv_obj_t *stock_name_labels_[MAX_STOCKS] = {};     // 股票名称（每行一个）
@@ -104,6 +105,7 @@ private:
     lv_obj_t *stock_wifi_icon_img_ = nullptr;          // 状态栏 WiFi 图标
     lv_obj_t *stock_battery_icon_img_ = nullptr;       // 状态栏电池图标
     lv_obj_t *stock_battery_pct_label_ = nullptr;      // 状态栏电量文字
+    lv_obj_t *stock_speaker_icon_img_ = nullptr;       // 状态栏音量图标
 
     // 股票数据缓存（由 DataUpdateTask 更新）
     StockData stock_data_cache_[MAX_STOCKS] = {};
@@ -113,9 +115,11 @@ private:
     lv_obj_t *wifi_icon_img_ = nullptr;
     lv_obj_t *battery_icon_img_ = nullptr;
     lv_obj_t *battery_pct_label_ = nullptr;  // 电池百分比文字
+    lv_obj_t *speaker_icon_img_ = nullptr;   // 天气页音量图标
     lv_obj_t *music_wifi_icon_img_ = nullptr;     // 音乐页面状态栏 WiFi 图标
     lv_obj_t *music_battery_icon_img_ = nullptr;  // 音乐页面状态栏电池图标
     lv_obj_t *music_battery_pct_label_ = nullptr; // 音乐页面状态栏电量文字
+    lv_obj_t *music_speaker_icon_img_ = nullptr;  // 音乐页面状态栏音量图标
 
     // 数据更新任务句柄
     TaskHandle_t update_task_handle_ = nullptr;
