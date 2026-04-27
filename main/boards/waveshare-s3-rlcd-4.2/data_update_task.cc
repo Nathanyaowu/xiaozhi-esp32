@@ -465,14 +465,19 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                     }
                 }
 
-                // 5. WiFi 图标更新（状态变化时才更新）
-                static DeviceState last_wifi_state = kDeviceStateUnknown;
-                if (ds != last_wifi_state) {
-                    const void* wifi_src = &ui_img_wifi_off;
-                    if (ds != kDeviceStateStarting && ds != kDeviceStateWifiConfiguring) {
-                        wifi_src = &ui_img_wifi;
-                    } else if (ds == kDeviceStateWifiConfiguring) {
+                // 5. WiFi 图标更新（基于实际连接状态）
+                static bool last_wifi_connected = false;
+                static DeviceState last_wifi_ds = kDeviceStateUnknown;
+                auto& wifi_status = WifiManager::GetInstance();
+                bool wifi_connected = wifi_status.IsConnected();
+                if (wifi_connected != last_wifi_connected || ds != last_wifi_ds) {
+                    const void* wifi_src;
+                    if (ds == kDeviceStateWifiConfiguring) {
                         wifi_src = &ui_img_wifi_low;
+                    } else if (wifi_connected) {
+                        wifi_src = &ui_img_wifi;
+                    } else {
+                        wifi_src = &ui_img_wifi_off;
                     }
                     if (self->wifi_icon_img_) {
                         lv_image_set_src(self->wifi_icon_img_, wifi_src);
@@ -486,7 +491,8 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                     if (self->stock_wifi_icon_img_) {
                         lv_image_set_src(self->stock_wifi_icon_img_, wifi_src);
                     }
-                    last_wifi_state = ds;
+                    last_wifi_connected = wifi_connected;
+                    last_wifi_ds = ds;
                 }
             }
 
