@@ -200,10 +200,10 @@ void CustomLcdDisplay::RefreshMemoDisplayInternal() {
     }
 
     // 格式化每条备忘为一行: "时间 内容"
-    // 卡片高度约 90px，16px 字体每行约 18px，最多显示约 5 行
+    // 备忘卡片空间有限，最多显示 2 行
     std::string display_text;
     int count = cJSON_GetArraySize(arr);
-    for (int i = 0; i < count && i < 5; i++) {
+    for (int i = 0; i < count && i < 2; i++) {
         cJSON *item = cJSON_GetArrayItem(arr, i);
         cJSON *t = cJSON_GetObjectItem(item, "t");
         cJSON *c = cJSON_GetObjectItem(item, "c");
@@ -222,9 +222,8 @@ void CustomLcdDisplay::RefreshMemoDisplayInternal() {
         }
     }
 
-    // 如果超过 5 条，提示还有更多
-    if (count > 5) {
-        display_text += "\n...还有" + std::to_string(count - 5) + "条";
+    if (count > 2) {
+        display_text += "\n...+" + std::to_string(count - 2);
     }
 
     cJSON_Delete(arr);

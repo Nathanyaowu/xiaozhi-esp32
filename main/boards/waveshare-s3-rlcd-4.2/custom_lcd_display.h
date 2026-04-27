@@ -57,6 +57,7 @@ private:
     lv_obj_t *day_label_ = nullptr;         // 星期 "TUE"
     lv_obj_t *date_num_label_ = nullptr;    // 日期 "15"
     lv_obj_t *weather_label_ = nullptr;     // 天气 "晴 25°C"
+
     
     // AI 对话卡片（左下）
     lv_obj_t *chat_card_ = nullptr;         // AI 卡片容器

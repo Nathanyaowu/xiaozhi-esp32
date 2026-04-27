@@ -358,12 +358,21 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                     }
                 }
 
-                // 3. 天气更新（内容变化时才刷新，避免无效重绘）
+                // 3. 天气更新（4行格式：城市名 / 今 / 明 / 后）
                 WeatherData wd = WeatherManager::getInstance().getLatestData();
                 if (wd.valid && self->weather_label_) {
-                    char weather_buf[48];
-                    snprintf(weather_buf, sizeof(weather_buf), "%s %s %s°C",
-                             wd.city.c_str(), wd.text.c_str(), wd.temp.c_str());
+                    char weather_buf[160];
+                    if (wd.forecast_count >= 3) {
+                        snprintf(weather_buf, sizeof(weather_buf),
+                                 "%s\n\xe4\xbb\x8a %s %s\xC2\xB0""C\n\xe6\x98\x8e %s %s~%s\xC2\xB0\n\xe5\x90\x8e %s %s~%s\xC2\xB0",
+                                 wd.city.c_str(),
+                                 wd.forecast[0].text.c_str(), wd.temp.c_str(),
+                                 wd.forecast[1].text.c_str(), wd.forecast[1].temp_min.c_str(), wd.forecast[1].temp_max.c_str(),
+                                 wd.forecast[2].text.c_str(), wd.forecast[2].temp_min.c_str(), wd.forecast[2].temp_max.c_str());
+                    } else {
+                        snprintf(weather_buf, sizeof(weather_buf), "%s\n\xe4\xbb\x8a %s %s\xC2\xB0""C",
+                                 wd.city.c_str(), wd.text.c_str(), wd.temp.c_str());
+                    }
                     static std::string last_weather_text;
                     if (last_weather_text != weather_buf) {
                         lv_label_set_text(self->weather_label_, weather_buf);

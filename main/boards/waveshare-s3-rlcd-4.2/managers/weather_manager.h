@@ -3,11 +3,20 @@
 #include "esp_http_client.h"
 
 // 天气数据结构
+struct DailyForecast {
+    std::string date;      // 日期 "2026-04-28"
+    std::string text;      // 白天天气 "晴"
+    std::string temp_min;  // 最低温
+    std::string temp_max;  // 最高温
+};
+
 struct WeatherData {
     std::string city;     // 城市名
-    std::string temp;     // 温度（字符串）
-    std::string text;     // 天气描述（如"晴"、"多云"）
+    std::string temp;     // 当前温度（字符串）
+    std::string text;     // 当前天气描述（如"晴"、"多云"）
     std::string update_time;
+    DailyForecast forecast[3];  // 今天/明天/后天
+    int forecast_count = 0;
     bool valid = false;
 };
 
@@ -54,4 +63,5 @@ private:
     
     static esp_err_t http_event_handler(esp_http_client_event_t *evt);
     void parseWeatherJson(const char* json_data);
+    void parseForecastJson(const char* json_data);
 };

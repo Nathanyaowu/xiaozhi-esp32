@@ -118,9 +118,7 @@ void CustomLcdDisplay::SetupWeatherUI() {
     const int left_w = 248;
     const int right_w = 400 - pad * 2 - left_w - gap;  // = 130
     const int bot_y = top_y + top_row_h + gap;
-    const int bot_total_w = 400 - pad * 2 - gap;
-    const int bot_card_w = bot_total_w * 2 / 3;  // AI 区域 = 252
-    const int music_card_w = bot_total_w - bot_card_w;  // 音乐区域 = 126
+    const int bot_card_w = left_w;  // AI 卡片与时钟卡片等宽
 
     // --- 左上：时钟卡片 ---
     lv_obj_t *time_card = lv_obj_create(screen);
@@ -150,13 +148,14 @@ void CustomLcdDisplay::SetupWeatherUI() {
     lv_obj_set_style_radius(time_inner, 10, 0);
     lv_obj_remove_flag(time_inner, LV_OBJ_FLAG_SCROLLABLE);
 
-    // --- 右上：日历卡片 ---
+    // --- 右侧：日历+天气+备忘录 统一卡片（从 top_y 延伸到底部，与左下 AI 卡片底部对齐）---
     int right_x = pad + left_w + gap;
     int day_header_h = 40;
+    int right_card_h = 300 - top_y - pad;  // 与 AI 卡片底部对齐
 
     lv_obj_t *calendar_card = lv_obj_create(screen);
     lv_obj_set_pos(calendar_card, right_x, top_y);
-    lv_obj_set_size(calendar_card, right_w, top_row_h);
+    lv_obj_set_size(calendar_card, right_w, right_card_h);
     lv_obj_set_style_border_width(calendar_card, 3, 0);
     lv_obj_set_style_border_color(calendar_card, lv_color_white(), 0);
     lv_obj_set_style_radius(calendar_card, 15, 0);
@@ -172,7 +171,7 @@ void CustomLcdDisplay::SetupWeatherUI() {
     lv_label_set_text(day_label_, "---");
 
     // 日期数字白色区域
-    int date_area_h = 55;
+    int date_area_h = 40;
     lv_obj_t *date_area = lv_obj_create(calendar_card);
     lv_obj_set_pos(date_area, 6, day_header_h);
     lv_obj_set_size(date_area, right_w - 18, date_area_h);
@@ -189,16 +188,43 @@ void CustomLcdDisplay::SetupWeatherUI() {
     lv_obj_center(date_num_label_);
     lv_label_set_text(date_num_label_, "----/--/--");
 
-    // 天气标签
+    // 天气标签（城市+今明后天，4行）
+    int weather_y = day_header_h + date_area_h + 2;
+    int weather_h = 80;  // 4行 × ~20px
     weather_label_ = lv_label_create(calendar_card);
-    lv_obj_set_style_text_font(weather_label_, font_small, 0);
+    lv_obj_set_style_text_font(weather_label_, font_ai, 0);
     lv_obj_set_style_text_color(weather_label_, lv_color_white(), 0);
-    lv_obj_set_style_text_align(weather_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(weather_label_, LV_ALIGN_BOTTOM_MID, 0, -6);
-    lv_label_set_text(weather_label_, "-- --°C");
+    lv_obj_set_style_text_align(weather_label_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_width(weather_label_, right_w - 12);
+    lv_label_set_long_mode(weather_label_, LV_LABEL_LONG_CLIP);
+    lv_obj_set_height(weather_label_, weather_h);
+    lv_obj_set_pos(weather_label_, 6, weather_y);
+    lv_label_set_text(weather_label_, "-- --\xC2\xB0""C");
+
+    // 分隔线（天气与备忘之间）
+    int sep_y = weather_y + weather_h + 2;
+    lv_obj_t *memo_sep = lv_obj_create(calendar_card);
+    lv_obj_set_pos(memo_sep, 6, sep_y);
+    lv_obj_set_size(memo_sep, right_w - 18, 1);
+    lv_obj_set_style_bg_color(memo_sep, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(memo_sep, LV_OPA_60, 0);
+    lv_obj_set_style_border_width(memo_sep, 0, 0);
+    lv_obj_set_style_radius(memo_sep, 0, 0);
+    lv_obj_remove_flag(memo_sep, LV_OBJ_FLAG_SCROLLABLE);
+
+    // 备忘录列表（在天气下方，最多2条）
+    int memo_y_in_card = sep_y + 4;
+    memo_list_label_ = lv_label_create(calendar_card);
+    lv_obj_set_style_text_font(memo_list_label_, font_ai, 0);
+    lv_obj_set_style_text_color(memo_list_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_align(memo_list_label_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_width(memo_list_label_, right_w - 12);
+    lv_label_set_long_mode(memo_list_label_, LV_LABEL_LONG_CLIP);
+    lv_obj_set_height(memo_list_label_, right_card_h - memo_y_in_card - 4);
+    lv_obj_set_pos(memo_list_label_, 6, memo_y_in_card);
+    lv_label_set_text(memo_list_label_, "");
 
     // --- 左下：AI 对话卡片（小智接管这里）---
-    // 布局：[左侧表情区 64px | 分隔线 | 右侧对话文字区]
     const int emotion_w = 64;  // 表情区域宽度
 
     chat_card_ = lv_obj_create(screen);
@@ -262,44 +288,6 @@ void CustomLcdDisplay::SetupWeatherUI() {
     lv_label_set_long_mode(chat_status_label_, LV_LABEL_LONG_WRAP);
     lv_obj_align(chat_status_label_, LV_ALIGN_LEFT_MID, emotion_w + 20, 0);
     lv_label_set_text(chat_status_label_, "AI 待命");
-
-    // --- 右下：备忘录/待办卡片 ---
-    lv_obj_t *memo_card = lv_obj_create(screen);
-    lv_obj_set_pos(memo_card, pad + bot_card_w + gap, bot_y);
-    lv_obj_set_size(memo_card, music_card_w, bot_row_h);
-    lv_obj_set_style_border_width(memo_card, 2, 0);
-    lv_obj_set_style_border_color(memo_card, lv_color_black(), 0);
-    lv_obj_set_style_radius(memo_card, 15, 0);
-    lv_obj_set_style_bg_color(memo_card, lv_color_white(), 0);
-    lv_obj_set_style_pad_all(memo_card, 6, 0);
-    lv_obj_remove_flag(memo_card, LV_OBJ_FLAG_SCROLLABLE);
-
-    // 顶部标题 "MEMO"
-    lv_obj_t *memo_title = lv_label_create(memo_card);
-    lv_obj_set_style_text_font(memo_title, font_small, 0);
-    lv_obj_set_style_text_color(memo_title, lv_color_black(), 0);
-    lv_obj_align(memo_title, LV_ALIGN_TOP_LEFT, 2, 0);
-    lv_label_set_text(memo_title, "MEMO");
-
-    // 标题下分隔线
-    lv_obj_t *memo_sep = lv_obj_create(memo_card);
-    lv_obj_set_size(memo_sep, music_card_w - 24, 1);
-    lv_obj_set_style_bg_color(memo_sep, lv_color_black(), 0);
-    lv_obj_set_style_border_width(memo_sep, 0, 0);
-    lv_obj_set_style_radius(memo_sep, 0, 0);
-    lv_obj_align(memo_sep, LV_ALIGN_TOP_MID, 0, 20);
-    lv_obj_remove_flag(memo_sep, LV_OBJ_FLAG_SCROLLABLE);
-
-    // 备忘列表（多行文字，每行一条：时间 + 内容）
-    memo_list_label_ = lv_label_create(memo_card);
-    lv_obj_set_style_text_font(memo_list_label_, font_ai, 0);  // 小智完整字库
-    lv_obj_set_style_text_color(memo_list_label_, lv_color_black(), 0);
-    lv_obj_set_style_text_align(memo_list_label_, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_width(memo_list_label_, music_card_w - 20);
-    lv_label_set_long_mode(memo_list_label_, LV_LABEL_LONG_CLIP);  // 超出裁剪，不滚动
-    lv_obj_set_height(memo_list_label_, bot_row_h - 32);  // 标题+分隔线占约 26px，留余量
-    lv_obj_align(memo_list_label_, LV_ALIGN_TOP_LEFT, 2, 26);
-    lv_label_set_text(memo_list_label_, "暂无待办");
 
     // 给基类创建隐藏的占位控件（防止基类方法空指针崩溃）
     // SetTheme / UpdateStatusBar 等方法会操作这些成员变量，

@@ -283,6 +283,48 @@ bool WeatherManager::update() {
         ESP_LOGE(TAG, "天气请求失败 (err=%d, status=%d)", err, status_code);
     }
     esp_http_client_cleanup(client);
+
+    // 第三步：获取3天预报数据
+    if (success) {
+        response_len = 0;
+        memset(response_buffer, 0, RESPONSE_BUFFER_SIZE);
+        char forecast_url[512];
+        snprintf(forecast_url, sizeof(forecast_url),
+                 "https://%s/v7/weather/3d?location=%.2f,%.2f&key=%s&lang=zh",
+                 api_host_.c_str(), lon, lat, api_key_.c_str());
+
+        ESP_LOGI(TAG, "获取3天预报数据...");
+        esp_http_client_config_t fc_config = {};
+        fc_config.url = forecast_url;
+        fc_config.event_handler = http_event_handler;
+        fc_config.timeout_ms = 15000;
+        fc_config.crt_bundle_attach = esp_crt_bundle_attach;
+        esp_http_client_handle_t fc_client = esp_http_client_init(&fc_config);
+        esp_http_client_set_header(fc_client, "Host", api_host_.c_str());
+        esp_http_client_set_header(fc_client, "Accept-Encoding", "gzip");
+
+        esp_err_t fc_err = esp_http_client_perform(fc_client);
+        int fc_status = esp_http_client_get_status_code(fc_client);
+
+        if (fc_err == ESP_OK && fc_status == 200 && response_len > 0) {
+            int d_len = 0;
+            const char* fc_json = NULL;
+            if (decompress_gzip_safe((uint8_t*)response_buffer, response_len,
+                                      decompressed_buffer, DECOMPRESSED_BUFFER_SIZE, &d_len)) {
+                fc_json = decompressed_buffer;
+            } else {
+                response_buffer[response_len] = '\0';
+                fc_json = response_buffer;
+            }
+            if (fc_json) {
+                parseForecastJson(fc_json);
+            }
+        } else {
+            ESP_LOGW(TAG, "3天预报请求失败 (err=%d, status=%d)", fc_err, fc_status);
+        }
+        esp_http_client_cleanup(fc_client);
+    }
+
     return success;
 }
 
@@ -297,6 +339,33 @@ void WeatherManager::parseWeatherJson(const char* json_data) {
             latest_data_.text = cJSON_GetObjectItem(now, "text")->valuestring;
             latest_data_.valid = true;
             ESP_LOGI(TAG, "天气更新成功: %s°C, %s", latest_data_.temp.c_str(), latest_data_.text.c_str());
+        }
+    }
+    cJSON_Delete(root);
+}
+
+void WeatherManager::parseForecastJson(const char* json_data) {
+    cJSON *root = cJSON_Parse(json_data);
+    if (!root) return;
+    cJSON *code = cJSON_GetObjectItem(root, "code");
+    if (code && strcmp(code->valuestring, "200") == 0) {
+        cJSON *daily = cJSON_GetObjectItem(root, "daily");
+        if (daily && cJSON_IsArray(daily)) {
+            int count = cJSON_GetArraySize(daily);
+            if (count > 3) count = 3;
+            latest_data_.forecast_count = count;
+            for (int i = 0; i < count; i++) {
+                cJSON *day = cJSON_GetArrayItem(daily, i);
+                cJSON *fxDate = cJSON_GetObjectItem(day, "fxDate");
+                cJSON *textDay = cJSON_GetObjectItem(day, "textDay");
+                cJSON *tempMin = cJSON_GetObjectItem(day, "tempMin");
+                cJSON *tempMax = cJSON_GetObjectItem(day, "tempMax");
+                if (fxDate) latest_data_.forecast[i].date = fxDate->valuestring;
+                if (textDay) latest_data_.forecast[i].text = textDay->valuestring;
+                if (tempMin) latest_data_.forecast[i].temp_min = tempMin->valuestring;
+                if (tempMax) latest_data_.forecast[i].temp_max = tempMax->valuestring;
+            }
+            ESP_LOGI(TAG, "3天预报解析成功，共 %d 天", count);
         }
     }
     cJSON_Delete(root);
