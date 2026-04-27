@@ -28,6 +28,10 @@ public:
     // 设置 API 密钥和主机（从配置中读取）
     void setApiConfig(const char* key, const char* host);
 
+    void setCityConfig(double lat, double lon, const std::string& name);
+    void clearCityConfig();
+    void loadCityFromNvs();
+
     // 通过外部工具（如 MCP）直接写入天气数据
     // 适用于不走板载 HTTP 天气接口，而由 AI 侧先查好天气再下发到设备
     bool updateFromExternal(const std::string& city,
@@ -42,6 +46,11 @@ private:
     // API 配置
     std::string api_key_;
     std::string api_host_;
+    
+    bool city_configured_ = false;
+    double city_lat_ = 0;
+    double city_lon_ = 0;
+    std::string city_name_;
     
     static esp_err_t http_event_handler(esp_http_client_event_t *evt);
     void parseWeatherJson(const char* json_data);

@@ -12,6 +12,7 @@
 #include "custom_lcd_display.h"
 
 #include <cmath>
+#include <atomic>
 #include <cstring>
 #include <cJSON.h>
 #include <sys/time.h>
@@ -46,6 +47,7 @@ static const char *TAG = "DataUpdate";
 
 TaskHandle_t g_stock_fetch_task_handle = nullptr;
 CustomLcdDisplay* g_display_instance = nullptr;
+std::atomic<bool> g_force_weather_update{false};
 
 void CustomLcdDisplay::StartDataUpdateTask() {
     WeatherManager::getInstance().setApiConfig(
@@ -189,8 +191,9 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
         // ===== 天气更新（每24小时拉取一次和风天气 API）=====
         static uint32_t last_weather_fetch_ms = 0;
         const uint32_t WEATHER_FETCH_INTERVAL = 24 * 60 * 60 * 1000;
-        if (network_connected && idle_long_enough && time_synced) {
-            bool should_fetch_weather = (last_weather_fetch_ms == 0) ||
+        bool force_weather = g_force_weather_update.exchange(false);
+        if (network_connected && (force_weather || (idle_long_enough && time_synced))) {
+            bool should_fetch_weather = force_weather || (last_weather_fetch_ms == 0) ||
                                         (now_ms - last_weather_fetch_ms >= WEATHER_FETCH_INTERVAL);
             if (should_fetch_weather) {
                 ESP_LOGI(TAG, "拉取和风天气数据...");

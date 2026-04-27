@@ -4,6 +4,7 @@
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
 #include "zlib.h"
+#include "settings.h"
 #include <string.h>
 #include <algorithm>
 #include <cctype>
@@ -46,6 +47,61 @@ WeatherManager& WeatherManager::getInstance() {
 void WeatherManager::setApiConfig(const char* key, const char* host) {
     api_key_ = key;
     api_host_ = host;
+    loadCityFromNvs();
+}
+
+void WeatherManager::setCityConfig(double lat, double lon, const std::string& name) {
+    city_configured_ = true;
+    city_lat_ = lat;
+    city_lon_ = lon;
+    city_name_ = name;
+}
+
+void WeatherManager::clearCityConfig() {
+    city_configured_ = false;
+    city_lat_ = 0;
+    city_lon_ = 0;
+    city_name_.clear();
+}
+
+void WeatherManager::loadCityFromNvs() {
+    Settings settings("weather", false);
+    std::string city_key = settings.GetString("city");
+    if (city_key.empty()) {
+        clearCityConfig();
+        return;
+    }
+    // web_config_server.cc 中定义了完整城市表，这里用简化映射
+    // 与 web_config_server.cc 的 CITY_TABLE 保持一致
+    struct { const char* key; const char* name; double lat; double lon; } cities[] = {
+        {"beijing","北京",39.90,116.41},{"shanghai","上海",31.23,121.47},
+        {"guangzhou","广州",23.13,113.26},{"shenzhen","深圳",22.54,114.06},
+        {"chengdu","成都",30.57,104.07},{"hangzhou","杭州",30.27,120.15},
+        {"wuhan","武汉",30.58,114.30},{"xian","西安",34.26,108.94},
+        {"nanjing","南京",32.06,118.80},{"chongqing","重庆",29.56,106.55},
+        {"tianjin","天津",39.13,117.20},{"suzhou","苏州",31.30,120.62},
+        {"zhengzhou","郑州",34.75,113.65},{"changsha","长沙",28.23,112.94},
+        {"dongguan","东莞",23.04,113.75},{"foshan","佛山",23.02,113.12},
+        {"kunming","昆明",25.04,102.71},{"hefei","合肥",31.82,117.23},
+        {"jinan","济南",36.65,116.99},{"fuzhou","福州",26.07,119.31},
+        {"dalian","大连",38.91,121.60},{"xiamen","厦门",24.48,118.09},
+        {"taiyuan","太原",37.87,112.55},{"shenyang","沈阳",41.80,123.43},
+        {"nanning","南宁",22.82,108.37},{"guiyang","贵阳",26.65,106.63},
+        {"shijiazhuang","石家庄",38.04,114.51},{"harbin","哈尔滨",45.75,126.65},
+        {"changchun","长春",43.88,125.32},{"lhasa","拉萨",29.65,91.13},
+        {"urumqi","乌鲁木齐",43.83,87.62},{"hohhot","呼和浩特",40.84,111.75},
+        {"haikou","海口",20.03,110.35},{"lanzhou","兰州",36.06,103.83},
+        {"yinchuan","银川",38.49,106.23},{"xining","西宁",36.62,101.78},
+        {"hongkong","香港",22.28,114.15},{"macau","澳门",22.20,113.55},
+    };
+    for (const auto& c : cities) {
+        if (city_key == c.key) {
+            setCityConfig(c.lat, c.lon, c.name);
+            ESP_LOGI(TAG, "从 NVS 加载天气城市: %s", c.name);
+            return;
+        }
+    }
+    clearCityConfig();
 }
 
 bool WeatherManager::updateFromExternal(const std::string& city,
@@ -117,84 +173,71 @@ bool WeatherManager::update() {
         return false;
     }
 
-    // 第一步：通过和风天气 GeoAPI 进行 IP 定位
-    response_len = 0;
-    memset(response_buffer, 0, RESPONSE_BUFFER_SIZE);
-    char geo_url[256];
-    // 使用 auto_ip 让服务端按公网出口 IP 识别城市
-    snprintf(geo_url, sizeof(geo_url), "https://%s/geo/v2/city/lookup?location=auto_ip&key=%s",
-             api_host_.c_str(), api_key_.c_str());
-
-    ESP_LOGI(TAG, "正在进行 IP 定位...");
-    esp_http_client_config_t geo_config = {};
-    geo_config.url = geo_url;
-    geo_config.event_handler = http_event_handler;
-    geo_config.timeout_ms = 8000;
-    geo_config.crt_bundle_attach = esp_crt_bundle_attach;
-    
-    esp_http_client_handle_t geo_client = esp_http_client_init(&geo_config);
-    esp_http_client_set_header(geo_client, "Host", api_host_.c_str());
-    esp_err_t geo_err = esp_http_client_perform(geo_client);
-    int geo_status = esp_http_client_get_status_code(geo_client);
-    
     // 默认位置（北京）
     double lat = 39.90, lon = 116.41; 
     std::string city_name = "北京";
 
-    if (geo_err == ESP_OK && geo_status == 200 && response_len > 0) {
-        // geo 响应也可能是 gzip 压缩的，先尝试解压
-        const char* geo_json = NULL;
-        int geo_d_len = 0;
-        if (decompressed_buffer &&
-            decompress_gzip_safe((uint8_t*)response_buffer, response_len,
-                                 decompressed_buffer, DECOMPRESSED_BUFFER_SIZE, &geo_d_len)) {
-            geo_json = decompressed_buffer;
-            ESP_LOGI(TAG, "IP 定位响应已 gzip 解压 (%d -> %d bytes)", response_len, geo_d_len);
-        } else {
-            response_buffer[response_len] = '\0';
-            geo_json = response_buffer;
-        }
-        cJSON *root = cJSON_Parse(geo_json);
-        if (root) {
-            cJSON *code = cJSON_GetObjectItem(root, "code");
-            if (code && cJSON_IsString(code) && strcmp(code->valuestring, "200") == 0) {
-                cJSON *location_array = cJSON_GetObjectItem(root, "location");
-                if (location_array && cJSON_GetArraySize(location_array) > 0) {
-                    cJSON *first_city = cJSON_GetArrayItem(location_array, 0);
-                    cJSON *lat_item = cJSON_GetObjectItem(first_city, "lat");
-                    cJSON *lon_item = cJSON_GetObjectItem(first_city, "lon");
-                    if (lat_item && lon_item &&
-                        cJSON_IsString(lat_item) && cJSON_IsString(lon_item)) {
-                        lat = atof(lat_item->valuestring);
-                        lon = atof(lon_item->valuestring);
-                        city_name = pick_city_name_for_display(first_city, city_name);
-                        ESP_LOGI(TAG, "定位成功: %s (%.2f, %.2f)", city_name.c_str(), lat, lon);
-                    } else {
-                        ESP_LOGW(TAG, "定位响应缺少必要字段（lat/lon），使用默认城市");
+    if (city_configured_) {
+        lat = city_lat_;
+        lon = city_lon_;
+        city_name = city_name_;
+        ESP_LOGI(TAG, "使用配置城市: %s (%.2f, %.2f)", city_name.c_str(), lat, lon);
+    } else {
+        // GeoAPI IP 定位（可能因未订阅而返回 403，此时使用默认城市）
+        response_len = 0;
+        memset(response_buffer, 0, RESPONSE_BUFFER_SIZE);
+        char geo_url[256];
+        snprintf(geo_url, sizeof(geo_url), "https://%s/geo/v2/city/lookup?location=auto_ip&key=%s",
+                 api_host_.c_str(), api_key_.c_str());
+
+        ESP_LOGI(TAG, "正在进行 IP 定位...");
+        esp_http_client_config_t geo_config = {};
+        geo_config.url = geo_url;
+        geo_config.event_handler = http_event_handler;
+        geo_config.timeout_ms = 8000;
+        geo_config.crt_bundle_attach = esp_crt_bundle_attach;
+        
+        esp_http_client_handle_t geo_client = esp_http_client_init(&geo_config);
+        esp_http_client_set_header(geo_client, "Host", api_host_.c_str());
+        esp_err_t geo_err = esp_http_client_perform(geo_client);
+        int geo_status = esp_http_client_get_status_code(geo_client);
+
+        if (geo_err == ESP_OK && geo_status == 200 && response_len > 0) {
+            const char* geo_json = NULL;
+            int geo_d_len = 0;
+            if (decompressed_buffer &&
+                decompress_gzip_safe((uint8_t*)response_buffer, response_len,
+                                     decompressed_buffer, DECOMPRESSED_BUFFER_SIZE, &geo_d_len)) {
+                geo_json = decompressed_buffer;
+            } else {
+                response_buffer[response_len] = '\0';
+                geo_json = response_buffer;
+            }
+            cJSON *root = cJSON_Parse(geo_json);
+            if (root) {
+                cJSON *code = cJSON_GetObjectItem(root, "code");
+                if (code && cJSON_IsString(code) && strcmp(code->valuestring, "200") == 0) {
+                    cJSON *location_array = cJSON_GetObjectItem(root, "location");
+                    if (location_array && cJSON_GetArraySize(location_array) > 0) {
+                        cJSON *first_city = cJSON_GetArrayItem(location_array, 0);
+                        cJSON *lat_item = cJSON_GetObjectItem(first_city, "lat");
+                        cJSON *lon_item = cJSON_GetObjectItem(first_city, "lon");
+                        if (lat_item && lon_item &&
+                            cJSON_IsString(lat_item) && cJSON_IsString(lon_item)) {
+                            lat = atof(lat_item->valuestring);
+                            lon = atof(lon_item->valuestring);
+                            city_name = pick_city_name_for_display(first_city, city_name);
+                            ESP_LOGI(TAG, "定位成功: %s (%.2f, %.2f)", city_name.c_str(), lat, lon);
+                        }
                     }
                 }
-            } else {
-                const char *api_code = (code && cJSON_IsString(code)) ? code->valuestring : "null";
-                ESP_LOGW(TAG, "IP 定位接口返回 code=%s，使用默认城市", api_code);
+                cJSON_Delete(root);
             }
-            cJSON_Delete(root);
         } else {
-            // 打印响应前 80 字节帮助诊断（可能是 HTML 网关页、乱码等）
-            ESP_LOGW(TAG, "IP 定位响应 JSON 解析失败 (len=%d, head=%.80s)，使用默认城市",
-                     response_len, geo_json);
+            ESP_LOGW(TAG, "IP 定位失败 (err=%d, status=%d)，使用默认城市", geo_err, geo_status);
         }
-    } else {
-        // 打印失败细节，便于区分网络错误 / HTTP 错误 / 参数错误
-        if (response_len > 0) {
-            response_buffer[response_len] = '\0';
-            ESP_LOGW(TAG, "IP 定位请求失败 (err=%d, status=%d, body=%.120s)，使用默认城市",
-                     geo_err, geo_status, response_buffer);
-        } else {
-            ESP_LOGW(TAG, "IP 定位请求失败 (err=%d, status=%d, empty body)，使用默认城市",
-                     geo_err, geo_status);
-        }
+        esp_http_client_cleanup(geo_client);
     }
-    esp_http_client_cleanup(geo_client);
 
     // 第二步：获取实时天气数据
     response_len = 0;

@@ -8,6 +8,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <atomic>
 #include <esp_log.h>
 #include <cJSON.h>
 #include <freertos/FreeRTOS.h>
@@ -18,6 +19,7 @@
 #include "custom_lcd_display.h"
 #include "board.h"
 #include "audio_codec.h"
+#include "managers/weather_manager.h"
 
 static const char *TAG = "WebConfig";
 
@@ -111,6 +113,52 @@ A股(深)：主板000/001、中小板002、创业板300/301、ETF 159xxx<br>
 <button class="btn btn-add" onclick="saveVolume()">设置</button>
 </div>
 <p style="font-size:12px;color:#888;margin-top:8px">快捷档位：0% / 34% / 67% / 100%（与BOOT长按一致）</p>
+<h3 style="margin:16px 0 8px;font-size:14px;color:#666">天气城市</h3>
+<div class="add-form" style="align-items:center">
+<select id="city" style="width:160px;padding:4px">
+<option value="">自动(默认北京)</option>
+<option value="beijing">北京</option>
+<option value="shanghai">上海</option>
+<option value="guangzhou">广州</option>
+<option value="shenzhen">深圳</option>
+<option value="chengdu">成都</option>
+<option value="hangzhou">杭州</option>
+<option value="wuhan">武汉</option>
+<option value="xian">西安</option>
+<option value="nanjing">南京</option>
+<option value="chongqing">重庆</option>
+<option value="tianjin">天津</option>
+<option value="suzhou">苏州</option>
+<option value="zhengzhou">郑州</option>
+<option value="changsha">长沙</option>
+<option value="dongguan">东莞</option>
+<option value="foshan">佛山</option>
+<option value="kunming">昆明</option>
+<option value="hefei">合肥</option>
+<option value="jinan">济南</option>
+<option value="fuzhou">福州</option>
+<option value="dalian">大连</option>
+<option value="xiamen">厦门</option>
+<option value="taiyuan">太原</option>
+<option value="shenyang">沈阳</option>
+<option value="nanning">南宁</option>
+<option value="guiyang">贵阳</option>
+<option value="shijiazhuang">石家庄</option>
+<option value="harbin">哈尔滨</option>
+<option value="changchun">长春</option>
+<option value="lhasa">拉萨</option>
+<option value="urumqi">乌鲁木齐</option>
+<option value="hohhot">呼和浩特</option>
+<option value="haikou">海口</option>
+<option value="lanzhou">兰州</option>
+<option value="yinchuan">银川</option>
+<option value="xining">西宁</option>
+<option value="hongkong">香港</option>
+<option value="macau">澳门</option>
+</select>
+<button class="btn btn-add" onclick="saveCity()">保存</button>
+</div>
+<p style="font-size:12px;color:#888;margin-top:8px">保存后将立即同步天气数据</p>
 </div>
 <h2 style="margin-top:20px">📝 备忘录</h2>
 <div class="card">
@@ -244,6 +292,17 @@ fetch('/api/volume').then(r=>r.json()).then(d=>{
   const v=d.volume||50;
   document.getElementById('volume').value=v;
   document.getElementById('vol-val').textContent=v+'%';
+}).catch(()=>{});
+
+function saveCity(){
+  const c=document.getElementById('city').value;
+  fetch('/api/weather/city',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({city:c})})
+  .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'保存失败')});return r.json()})
+  .then(()=>showMsg('天气城市已保存，正在同步...',true))
+  .catch(e=>showMsg(e.message,false));
+}
+fetch('/api/weather/city').then(r=>r.json()).then(d=>{
+  if(d.city)document.getElementById('city').value=d.city;
 }).catch(()=>{});
 </script>
 </body>
@@ -676,6 +735,133 @@ static esp_err_t HandlePostVolume(httpd_req_t *req) {
 }
 
 // ============================================================
+// 天气城市 GET/POST
+// ============================================================
+
+struct CityInfo {
+    const char* key;
+    const char* name;
+    double lat;
+    double lon;
+};
+
+static const CityInfo CITY_TABLE[] = {
+    {"beijing",      "北京",     39.90, 116.41},
+    {"shanghai",     "上海",     31.23, 121.47},
+    {"guangzhou",    "广州",     23.13, 113.26},
+    {"shenzhen",     "深圳",     22.54, 114.06},
+    {"chengdu",      "成都",     30.57, 104.07},
+    {"hangzhou",     "杭州",     30.27, 120.15},
+    {"wuhan",        "武汉",     30.58, 114.30},
+    {"xian",         "西安",     34.26, 108.94},
+    {"nanjing",      "南京",     32.06, 118.80},
+    {"chongqing",    "重庆",     29.56, 106.55},
+    {"tianjin",      "天津",     39.13, 117.20},
+    {"suzhou",       "苏州",     31.30, 120.62},
+    {"zhengzhou",    "郑州",     34.75, 113.65},
+    {"changsha",     "长沙",     28.23, 112.94},
+    {"dongguan",     "东莞",     23.04, 113.75},
+    {"foshan",       "佛山",     23.02, 113.12},
+    {"kunming",      "昆明",     25.04, 102.71},
+    {"hefei",        "合肥",     31.82, 117.23},
+    {"jinan",        "济南",     36.65, 116.99},
+    {"fuzhou",       "福州",     26.07, 119.31},
+    {"dalian",       "大连",     38.91, 121.60},
+    {"xiamen",       "厦门",     24.48, 118.09},
+    {"taiyuan",      "太原",     37.87, 112.55},
+    {"shenyang",     "沈阳",     41.80, 123.43},
+    {"nanning",      "南宁",     22.82, 108.37},
+    {"guiyang",      "贵阳",     26.65, 106.63},
+    {"shijiazhuang", "石家庄",   38.04, 114.51},
+    {"harbin",       "哈尔滨",   45.75, 126.65},
+    {"changchun",    "长春",     43.88, 125.32},
+    {"lhasa",        "拉萨",     29.65, 91.13},
+    {"urumqi",       "乌鲁木齐", 43.83, 87.62},
+    {"hohhot",       "呼和浩特", 40.84, 111.75},
+    {"haikou",       "海口",     20.03, 110.35},
+    {"lanzhou",      "兰州",     36.06, 103.83},
+    {"yinchuan",     "银川",     38.49, 106.23},
+    {"xining",       "西宁",     36.62, 101.78},
+    {"hongkong",     "香港",     22.28, 114.15},
+    {"macau",        "澳门",    22.20, 113.55},
+};
+static const int CITY_COUNT = sizeof(CITY_TABLE) / sizeof(CITY_TABLE[0]);
+
+static const CityInfo* FindCity(const char* key) {
+    for (int i = 0; i < CITY_COUNT; i++) {
+        if (strcmp(CITY_TABLE[i].key, key) == 0) return &CITY_TABLE[i];
+    }
+    return nullptr;
+}
+
+static esp_err_t HandleGetWeatherCity(httpd_req_t *req) {
+    Settings settings("weather", false);
+    std::string city = settings.GetString("city");
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"city\":\"%s\"}", city.c_str());
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+static esp_err_t HandlePostWeatherCity(httpd_req_t *req) {
+    char buf[128];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"empty body\"}");
+        return ESP_OK;
+    }
+    buf[received] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"invalid JSON\"}");
+        return ESP_OK;
+    }
+
+    cJSON *val = cJSON_GetObjectItem(root, "city");
+    if (!val || !cJSON_IsString(val)) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"missing city field\"}");
+        return ESP_OK;
+    }
+
+    const char* city_key = val->valuestring;
+    if (strlen(city_key) > 0 && !FindCity(city_key)) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"unknown city\"}");
+        return ESP_OK;
+    }
+
+    {
+        Settings settings("weather", true);
+        settings.SetString("city", city_key);
+    }
+
+    const CityInfo* info = FindCity(city_key);
+    if (info) {
+        WeatherManager::getInstance().setCityConfig(info->lat, info->lon, info->name);
+        ESP_LOGI(TAG, "Web 设置天气城市: %s (%.2f, %.2f)", info->name, info->lat, info->lon);
+    } else {
+        WeatherManager::getInstance().clearCityConfig();
+        ESP_LOGI(TAG, "Web 清除天气城市配置，使用默认");
+    }
+
+    // 触发立即拉取天气
+    extern std::atomic<bool> g_force_weather_update;
+    g_force_weather_update.store(true);
+
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+// ============================================================
 // Server 启动/停止
 // ============================================================
 
@@ -683,7 +869,7 @@ void WebConfigServer::Start() {
     if (started_) return;
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 10;
+    config.max_uri_handlers = 12;
     config.stack_size = 4096;
     config.lru_purge_enable = true;
 
@@ -761,6 +947,21 @@ void WebConfigServer::Start() {
     };
     httpd_register_uri_handler(server_, &uri_get_volume);
     httpd_register_uri_handler(server_, &uri_post_volume);
+
+    httpd_uri_t uri_get_city = {
+        .uri = "/api/weather/city",
+        .method = HTTP_GET,
+        .handler = HandleGetWeatherCity,
+        .user_ctx = nullptr
+    };
+    httpd_uri_t uri_post_city = {
+        .uri = "/api/weather/city",
+        .method = HTTP_POST,
+        .handler = HandlePostWeatherCity,
+        .user_ctx = nullptr
+    };
+    httpd_register_uri_handler(server_, &uri_get_city);
+    httpd_register_uri_handler(server_, &uri_post_city);
 
     started_ = true;
     ESP_LOGI(TAG, "Web 配置服务器已启动 (端口 80)");
