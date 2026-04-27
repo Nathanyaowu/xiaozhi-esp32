@@ -450,6 +450,10 @@ void CustomLcdDisplay::CycleDisplayMode() {
         case MODE_STOCK:    name = "股票页"; break;
     }
     ESP_LOGI(TAG, "页面切换: %s", name);
+
+    if (display_mode_ == MODE_STOCK && stock_fetch_task_handle_) {
+        xTaskNotifyGive(stock_fetch_task_handle_);
+    }
 }
 
 void CustomLcdDisplay::SetMusicInfo(const char* title, const char* artist) {
@@ -563,6 +567,9 @@ void CustomLcdDisplay::SwitchToStockPage() {
         display_mode_ = MODE_STOCK;
         ApplyDisplayMode();
         ESP_LOGI(TAG, "自动切换到股票页");
+        if (stock_fetch_task_handle_) {
+            xTaskNotifyGive(stock_fetch_task_handle_);
+        }
     }
 }
 

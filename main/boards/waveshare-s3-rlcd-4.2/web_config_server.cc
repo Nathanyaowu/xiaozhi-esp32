@@ -83,6 +83,21 @@ th{color:#666;font-weight:500}
 </label>
 <button class="btn btn-add" onclick="addStock()">添加</button>
 </div>
+<div style="margin-top:10px;font-size:12px;color:#888;line-height:1.8">
+<b>代码格式说明：</b><br>
+A股(沪)：主板600/601/603、科创板688、ETF 51x/58x（输入6位数字）<br>
+A股(深)：主板000/001、中小板002、创业板300/301、ETF 159xxx<br>
+港股：5位数字，补零（如腾讯填 00700）<br>
+美股：英文代号，小写（如苹果填 aapl）
+</div>
+</div>
+<div class="card">
+<h3 style="margin-bottom:8px;font-size:14px;color:#666">刷新设置</h3>
+<p style="font-size:12px;color:#888;margin-bottom:8px">股票页按此间隔刷新(5~300秒)，非股票页固定60秒刷新一次</p>
+<div class="add-form">
+<label>刷新间隔<input id="interval" type="number" min="5" max="300" value="30" style="width:60px">秒</label>
+</div>
+<button class="btn btn-add" style="margin-top:10px" onclick="saveInterval()">保存</button>
 </div>
 <script>
 let stocks=[];
@@ -138,7 +153,17 @@ function save(){
   .catch(e=>showMsg(e.message,false));
 }
 
+function saveInterval(){
+  const v=parseInt(document.getElementById('interval').value);
+  if(isNaN(v)||v<5||v>300){showMsg('间隔范围 5~300 秒',false);return;}
+  fetch('/api/stock/interval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interval:v})})
+  .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'保存失败')});return r.json()})
+  .then(()=>showMsg('刷新间隔已保存',true))
+  .catch(e=>showMsg(e.message,false));
+}
+
 fetch('/api/stock').then(r=>r.json()).then(d=>{stocks=d;render()}).catch(()=>render());
+fetch('/api/stock/interval').then(r=>r.json()).then(d=>{document.getElementById('interval').value=d.interval||30}).catch(()=>{});
 </script>
 </body>
 </html>
@@ -260,12 +285,12 @@ esp_err_t WebConfigServer::HandlePostStockConfig(httpd_req_t *req) {
     }
 
     int count = cJSON_GetArraySize(arr);
-    if (count <= 0 || count > MAX_STOCKS) {
+    if (count > MAX_STOCKS) {
         cJSON_Delete(arr);
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_set_type(req, "application/json");
         char err[64];
-        snprintf(err, sizeof(err), "{\"error\":\"stock count must be 1-%d\"}", MAX_STOCKS);
+        snprintf(err, sizeof(err), "{\"error\":\"stock count max %d\"}", MAX_STOCKS);
         httpd_resp_sendstr(req, err);
         return ESP_OK;
     }
@@ -353,6 +378,65 @@ esp_err_t WebConfigServer::HandlePostStockConfig(httpd_req_t *req) {
 }
 
 // ============================================================
+// 刷新间隔 GET/POST
+// ============================================================
+
+static esp_err_t HandleGetInterval(httpd_req_t *req) {
+    Settings settings("stock", false);
+    int interval = settings.GetInt("interval", 30);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "{\"interval\":%d}", interval);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+static esp_err_t HandlePostInterval(httpd_req_t *req) {
+    char buf[64];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"empty body\"}");
+        return ESP_OK;
+    }
+    buf[received] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"invalid JSON\"}");
+        return ESP_OK;
+    }
+
+    cJSON *val = cJSON_GetObjectItem(root, "interval");
+    if (!cJSON_IsNumber(val) || val->valueint < 5 || val->valueint > 300) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"interval must be 5~300\"}");
+        return ESP_OK;
+    }
+
+    int interval = val->valueint;
+    cJSON_Delete(root);
+
+    {
+        Settings settings("stock", true);
+        settings.SetInt("interval", interval);
+    }
+    ESP_LOGI(TAG, "刷新间隔已更新: %d 秒", interval);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+
+    extern TaskHandle_t g_stock_fetch_task_handle;
+    if (g_stock_fetch_task_handle) {
+        xTaskNotifyGive(g_stock_fetch_task_handle);
+    }
+
+    return ESP_OK;
+}
+
+// ============================================================
 // Server 启动/停止
 // ============================================================
 
@@ -393,6 +477,21 @@ void WebConfigServer::Start() {
     httpd_register_uri_handler(server_, &uri_index);
     httpd_register_uri_handler(server_, &uri_get_stock);
     httpd_register_uri_handler(server_, &uri_post_stock);
+
+    httpd_uri_t uri_get_interval = {
+        .uri = "/api/stock/interval",
+        .method = HTTP_GET,
+        .handler = HandleGetInterval,
+        .user_ctx = nullptr
+    };
+    httpd_uri_t uri_post_interval = {
+        .uri = "/api/stock/interval",
+        .method = HTTP_POST,
+        .handler = HandlePostInterval,
+        .user_ctx = nullptr
+    };
+    httpd_register_uri_handler(server_, &uri_get_interval);
+    httpd_register_uri_handler(server_, &uri_post_interval);
 
     started_ = true;
     ESP_LOGI(TAG, "Web 配置服务器已启动 (端口 80)");

@@ -248,13 +248,33 @@ void CustomLcdDisplay::SetupStockUI() {
 void CustomLcdDisplay::UpdateStockDisplay(const StockData* data, int count, const StockConfig* configs) {
     DisplayLockGuard lock(this);
 
+    if (count == 0) {
+        if (stock_name_labels_[0]) lv_label_set_text(stock_name_labels_[0], "到web添加");
+        if (stock_price_labels_[0]) lv_label_set_text(stock_price_labels_[0], "");
+        if (stock_change_labels_[0]) lv_label_set_text(stock_change_labels_[0], "");
+        if (stock_range_labels_[0]) lv_label_set_text(stock_range_labels_[0], "");
+        for (int i = 1; i < MAX_STOCKS; i++) {
+            if (stock_name_labels_[i]) lv_label_set_text(stock_name_labels_[i], "");
+            if (stock_price_labels_[i]) lv_label_set_text(stock_price_labels_[i], "");
+            if (stock_change_labels_[i]) lv_label_set_text(stock_change_labels_[i], "");
+            if (stock_range_labels_[i]) lv_label_set_text(stock_range_labels_[i], "");
+        }
+        if (stock_update_label_) lv_label_set_text(stock_update_label_, "");
+        return;
+    }
+
     for (int i = 0; i < count && i < MAX_STOCKS; i++) {
         if (configs && stock_name_labels_[i]) {
             lv_label_set_text(stock_name_labels_[i], configs[i].name);
             start_name_scroll_once(stock_name_labels_[i]);
         }
 
-        if (!data[i].valid) continue;
+        if (!data[i].valid) {
+            if (stock_price_labels_[i]) lv_label_set_text(stock_price_labels_[i], "停牌");
+            if (stock_change_labels_[i]) lv_label_set_text(stock_change_labels_[i], "--");
+            if (stock_range_labels_[i]) lv_label_set_text(stock_range_labels_[i], "--");
+            continue;
+        }
 
         // 现价
         char price_buf[16];

@@ -240,8 +240,7 @@ int GetStockConfigs(StockConfig* out_configs) {
     int count = cJSON_GetArraySize(arr);
     if (count <= 0) {
         cJSON_Delete(arr);
-        memcpy(out_configs, kDefaultStocks, sizeof(StockConfig) * MAX_STOCKS);
-        return MAX_STOCKS;
+        return 0;
     }
     if (count > MAX_STOCKS) count = MAX_STOCKS;
 

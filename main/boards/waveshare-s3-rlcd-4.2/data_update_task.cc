@@ -656,7 +656,6 @@ void CustomLcdDisplay::StartStockFetchTask() {
 
 void CustomLcdDisplay::StockFetchTask(void *arg) {
     CustomLcdDisplay *self = (CustomLcdDisplay *)arg;
-    const uint32_t STOCK_FETCH_INTERVAL_MS = 30 * 1000;  // 30 秒
 
     // 首次立即获取
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -672,17 +671,19 @@ void CustomLcdDisplay::StockFetchTask(void *arg) {
             StockConfig configs[MAX_STOCKS];
             int stock_count = GetStockConfigs(configs);
             StockData results[MAX_STOCKS] = {};
-            int fetched = FetchStockData(configs, results, stock_count);
-            if (fetched > 0) {
-                // 写入缓存（单写者，无需锁）
-                memcpy(self->stock_data_cache_, results, sizeof(results));
-                memcpy(self->stock_configs_cache_, configs, stock_count * sizeof(StockConfig));
-                self->stock_count_cache_ = stock_count;
-                self->stock_data_valid_ = true;
-                self->stock_data_dirty_ = true;
+            if (stock_count > 0) {
+                FetchStockData(configs, results, stock_count);
             }
+            memcpy(self->stock_data_cache_, results, sizeof(results));
+            memcpy(self->stock_configs_cache_, configs, stock_count * sizeof(StockConfig));
+            self->stock_count_cache_ = stock_count;
+            self->stock_data_valid_ = true;
+            self->stock_data_dirty_ = true;
         }
 
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(STOCK_FETCH_INTERVAL_MS));
+        Settings interval_settings("stock", false);
+        uint32_t user_interval_ms = interval_settings.GetInt("interval", 30) * 1000;
+        uint32_t interval_ms = self->IsStockMode() ? user_interval_ms : 60000;
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(interval_ms));
     }
 }
