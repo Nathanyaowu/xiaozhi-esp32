@@ -35,4 +35,9 @@ extern const StockConfig kDefaultStocks[MAX_STOCKS];
 // 返回成功获取的股票数量
 int FetchStockData(const StockConfig* configs, StockData* results, int count);
 
+// 从 NVS 读取用户配置的股票列表，读取失败则返回 kDefaultStocks
+// out_configs: 输出数组（调用者分配，至少 MAX_STOCKS 个元素）
+// 返回实际股票数量
+int GetStockConfigs(StockConfig* out_configs);
+
 #endif

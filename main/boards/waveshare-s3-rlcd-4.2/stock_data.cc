@@ -12,6 +12,8 @@
 #include <cmath>
 #include <esp_log.h>
 #include <esp_http_client.h>
+#include <cJSON.h>
+#include "settings.h"
 #include "secret_config.h"
 
 static const char *TAG = "StockData";
@@ -212,4 +214,60 @@ int FetchStockData(const StockConfig* configs, StockData* results, int count) {
     esp_http_client_cleanup(client);
     free(resp_buf);
     return success_count;
+}
+
+// NVS 中缓存的动态配置（静态存储，避免每次 malloc）
+static StockConfig s_dynamic_configs[MAX_STOCKS];
+static char s_code_bufs[MAX_STOCKS][16];
+static char s_name_bufs[MAX_STOCKS][48];
+
+int GetStockConfigs(StockConfig* out_configs) {
+    Settings settings("stock", false);
+    std::string json = settings.GetString("list", "");
+
+    if (json.empty()) {
+        memcpy(out_configs, kDefaultStocks, sizeof(StockConfig) * MAX_STOCKS);
+        return MAX_STOCKS;
+    }
+
+    cJSON *arr = cJSON_Parse(json.c_str());
+    if (!arr || !cJSON_IsArray(arr)) {
+        if (arr) cJSON_Delete(arr);
+        memcpy(out_configs, kDefaultStocks, sizeof(StockConfig) * MAX_STOCKS);
+        return MAX_STOCKS;
+    }
+
+    int count = cJSON_GetArraySize(arr);
+    if (count <= 0) {
+        cJSON_Delete(arr);
+        memcpy(out_configs, kDefaultStocks, sizeof(StockConfig) * MAX_STOCKS);
+        return MAX_STOCKS;
+    }
+    if (count > MAX_STOCKS) count = MAX_STOCKS;
+
+    for (int i = 0; i < count; i++) {
+        cJSON *item = cJSON_GetArrayItem(arr, i);
+        cJSON *code = cJSON_GetObjectItem(item, "code");
+        cJSON *name = cJSON_GetObjectItem(item, "name");
+        cJSON *market = cJSON_GetObjectItem(item, "market");
+
+        if (!cJSON_IsString(code) || !cJSON_IsString(name) || !cJSON_IsNumber(market)) {
+            cJSON_Delete(arr);
+            memcpy(out_configs, kDefaultStocks, sizeof(StockConfig) * MAX_STOCKS);
+            return MAX_STOCKS;
+        }
+
+        strncpy(s_code_bufs[i], code->valuestring, sizeof(s_code_bufs[i]) - 1);
+        s_code_bufs[i][sizeof(s_code_bufs[i]) - 1] = '\0';
+        strncpy(s_name_bufs[i], name->valuestring, sizeof(s_name_bufs[i]) - 1);
+        s_name_bufs[i][sizeof(s_name_bufs[i]) - 1] = '\0';
+
+        s_dynamic_configs[i].code = s_code_bufs[i];
+        s_dynamic_configs[i].name = s_name_bufs[i];
+        s_dynamic_configs[i].market = (StockMarket)market->valueint;
+    }
+
+    cJSON_Delete(arr);
+    memcpy(out_configs, s_dynamic_configs, sizeof(StockConfig) * count);
+    return count;
 }

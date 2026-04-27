@@ -27,6 +27,8 @@
 #include "managers/weather_manager.h"
 #include "managers/pomodoro_manager.h"
 #include "stock_data.h"
+#include "web_config_server.h"
+#include "wifi_manager.h"
 #include "secret_config.h"
 #include <font_awesome.h>
 
@@ -41,6 +43,8 @@ LV_IMAGE_DECLARE(ui_img_battery_charging);
 LV_FONT_DECLARE(font_awesome_20_4);
 
 static const char *TAG = "DataUpdate";
+
+TaskHandle_t g_stock_fetch_task_handle = nullptr;
 
 void CustomLcdDisplay::StartDataUpdateTask() {
     // 暂时停用板载和风天气 API 配置，改为由 MCP 工具写入天气缓存
@@ -78,9 +82,8 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
     // 记录进入 idle 的时刻，用于"连续 idle 足够久才发网络请求"的保护
     uint32_t idle_since_ms = 0;
     
-    // 股票数据定时获取（30 秒盘中，5 分钟盘后）
-    uint32_t last_stock_fetch_ms = 0;
-    const uint32_t STOCK_FETCH_INTERVAL = 30 * 1000;
+    // Web 配置服务器启动标志
+    bool web_server_started = false;
     
     // 初始化活动时间（系统启动算一次活动）
     self->last_activity_ms_ = xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -119,6 +122,18 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
         }
         bool idle_long_enough = (idle_since_ms > 0 && (now_ms - idle_since_ms >= IDLE_GUARD_MS));
         
+        // ===== Web 配置服务器 + 股票 Fetch Task 启动（WiFi 就绪后一次性启动）=====
+        if (network_connected && !web_server_started) {
+            WebConfigServer::Start();
+            self->StartStockFetchTask();
+            web_server_started = true;
+
+            auto& wifi = WifiManager::GetInstance();
+            std::string ip_text = wifi.GetIpAddress() + ":80";
+            DisplayLockGuard lock(self);
+            if (self->ip_label_) lv_label_set_text(self->ip_label_, ip_text.c_str());
+        }
+
         // ===== NTP 时间同步 =====
         // 仅在连续 idle 足够久后同步，避免与 AI 对话抢网络/内存
         if (network_connected && idle_long_enough) {
@@ -579,26 +594,20 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
             }
         }
 
-        // ===== 股票数据获取（30 秒一次，仅在股票页且网络连接且非音频会话时）=====
-        if (self->IsStockMode() && network_connected && !in_audio_session &&
-            (last_stock_fetch_ms == 0 || (now_ms - last_stock_fetch_ms >= STOCK_FETCH_INTERVAL))) {
-            StockData results[MAX_STOCKS] = {};
-            int fetched = FetchStockData(kDefaultStocks, results, MAX_STOCKS);
-            if (fetched > 0) {
-                memcpy(self->stock_data_cache_, results, sizeof(results));
-                self->stock_data_valid_ = true;
-                self->UpdateStockDisplay(results, MAX_STOCKS);
-                // 同步更新股票页的时钟和温湿度（如果在股票页）
-                {
-                    DisplayLockGuard stock_lock(self);
-                    if (self->stock_time_label_) {
-                        char tbuf[16];
-                        strftime(tbuf, sizeof(tbuf), "%H:%M", &timeinfo);
-                        lv_label_set_text(self->stock_time_label_, tbuf);
-                    }
+        // ===== 股票数据显示更新（由独立 StockFetchTask 设置 dirty flag）=====
+        if (self->stock_data_dirty_.exchange(false)) {
+            // StockFetchTask 已拉取新数据，刷新 UI
+            self->UpdateStockDisplay(self->stock_data_cache_, self->stock_count_cache_,
+                                     self->stock_configs_cache_);
+            // 同步更新股票页的时钟
+            {
+                DisplayLockGuard stock_lock(self);
+                if (self->stock_time_label_) {
+                    char tbuf[16];
+                    strftime(tbuf, sizeof(tbuf), "%H:%M", &timeinfo);
+                    lv_label_set_text(self->stock_time_label_, tbuf);
                 }
             }
-            last_stock_fetch_ms = now_ms;
         }
 
         // ===== 股票页状态栏同步（时钟/温湿度，每分钟）=====
@@ -630,5 +639,50 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
         // 动态刷新间隔：正常 1 秒，省电 5 秒
         int delay_ms = self->power_saving_ ? self->SAVING_REFRESH_MS : self->NORMAL_REFRESH_MS;
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    }
+}
+
+// ===== 股票数据获取独立任务 =====
+// 与 UI 更新解耦，避免 HTTP 阻塞影响 UI 刷新
+
+void CustomLcdDisplay::StartStockFetchTask() {
+    if (stock_fetch_task_handle_ != nullptr) {
+        return;  // 已经启动过
+    }
+    xTaskCreate(StockFetchTask, "stock_fetch", 6144, this, 2, &stock_fetch_task_handle_);
+    g_stock_fetch_task_handle = stock_fetch_task_handle_;
+    ESP_LOGI(TAG, "📈 股票数据获取任务已启动（独立 task，30 秒间隔）");
+}
+
+void CustomLcdDisplay::StockFetchTask(void *arg) {
+    CustomLcdDisplay *self = (CustomLcdDisplay *)arg;
+    const uint32_t STOCK_FETCH_INTERVAL_MS = 30 * 1000;  // 30 秒
+
+    // 首次立即获取
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    while (1) {
+        auto& app = Application::GetInstance();
+        DeviceState ds = app.GetDeviceState();
+        bool in_audio_session = (ds == kDeviceStateConnecting ||
+                                 ds == kDeviceStateListening ||
+                                 ds == kDeviceStateSpeaking);
+
+        if (!in_audio_session) {
+            StockConfig configs[MAX_STOCKS];
+            int stock_count = GetStockConfigs(configs);
+            StockData results[MAX_STOCKS] = {};
+            int fetched = FetchStockData(configs, results, stock_count);
+            if (fetched > 0) {
+                // 写入缓存（单写者，无需锁）
+                memcpy(self->stock_data_cache_, results, sizeof(results));
+                memcpy(self->stock_configs_cache_, configs, stock_count * sizeof(StockConfig));
+                self->stock_count_cache_ = stock_count;
+                self->stock_data_valid_ = true;
+                self->stock_data_dirty_ = true;
+            }
+        }
+
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(STOCK_FETCH_INTERVAL_MS));
     }
 }

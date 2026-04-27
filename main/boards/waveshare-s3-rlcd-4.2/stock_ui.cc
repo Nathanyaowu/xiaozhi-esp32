@@ -11,6 +11,45 @@
 #include <esp_log.h>
 #include <font_awesome.h>
 
+static const int NAME_COL_WIDTH = 85;
+
+static void name_scroll_exec(void *obj, int32_t v) {
+    lv_obj_set_x((lv_obj_t *)obj, v);
+}
+
+static void scroll_back_cb(lv_anim_t *a) {
+    lv_obj_t *label = (lv_obj_t *)a->var;
+    lv_anim_t anim_back;
+    lv_anim_init(&anim_back);
+    lv_anim_set_var(&anim_back, label);
+    lv_anim_set_values(&anim_back, lv_obj_get_x(label), 0);
+    lv_anim_set_duration(&anim_back, 600);
+    lv_anim_set_delay(&anim_back, 1000);
+    lv_anim_set_exec_cb(&anim_back, name_scroll_exec);
+    lv_anim_start(&anim_back);
+}
+
+static void start_name_scroll_once(lv_obj_t *label) {
+    lv_obj_update_layout(label);
+    int32_t text_w = lv_obj_get_width(label);
+    if (text_w <= NAME_COL_WIDTH) return;
+
+    int32_t overflow = text_w - NAME_COL_WIDTH;
+
+    lv_anim_delete(label, nullptr);
+    lv_obj_set_x(label, 0);
+
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, label);
+    lv_anim_set_values(&anim, 0, -overflow);
+    lv_anim_set_duration(&anim, overflow * 30);
+    lv_anim_set_delay(&anim, 1500);
+    lv_anim_set_exec_cb(&anim, name_scroll_exec);
+    lv_anim_set_completed_cb(&anim, scroll_back_cb);
+    lv_anim_start(&anim);
+}
+
 LV_FONT_DECLARE(alibaba_puhui_16);
 LV_FONT_DECLARE(alibaba_puhui_24);
 LV_FONT_DECLARE(font_puhui_16_4);
@@ -89,6 +128,8 @@ void CustomLcdDisplay::SetupStockUI() {
     lv_obj_align(stock_sensor_label_, LV_ALIGN_TOP_LEFT, 80, 11);
     lv_label_set_text(stock_sensor_label_, "--.-°C --.-%");
 
+
+
     // ===== 标题 "Stock" =====
     const int title_y = 38;
     lv_obj_t *title_label = lv_label_create(screen);
@@ -144,11 +185,20 @@ void CustomLcdDisplay::SetupStockUI() {
     for (int i = 0; i < MAX_STOCKS; i++) {
         int y = row_start_y + i * row_height;
 
-        // 名称列
-        stock_name_labels_[i] = lv_label_create(screen);
+        // 名称列（容器裁剪 + 内部 label 可滚动）
+        lv_obj_t *name_cont = lv_obj_create(screen);
+        lv_obj_set_size(name_cont, NAME_COL_WIDTH, row_height - 4);
+        lv_obj_set_pos(name_cont, col_name_x, y);
+        lv_obj_set_style_bg_opa(name_cont, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(name_cont, 0, 0);
+        lv_obj_set_style_pad_all(name_cont, 0, 0);
+        lv_obj_set_style_radius(name_cont, 0, 0);
+        lv_obj_remove_flag(name_cont, LV_OBJ_FLAG_SCROLLABLE);
+
+        stock_name_labels_[i] = lv_label_create(name_cont);
         lv_obj_set_style_text_font(stock_name_labels_[i], font_data, 0);
         lv_obj_set_style_text_color(stock_name_labels_[i], lv_color_white(), 0);
-        lv_obj_set_pos(stock_name_labels_[i], col_name_x, y);
+        lv_obj_set_pos(stock_name_labels_[i], 0, 0);
         lv_label_set_text(stock_name_labels_[i], kDefaultStocks[i].name);
 
         // 现价列
@@ -195,10 +245,15 @@ void CustomLcdDisplay::SetupStockUI() {
     ESP_LOGI(TAG, "股票行情页 UI 创建完成");
 }
 
-void CustomLcdDisplay::UpdateStockDisplay(const StockData* data, int count) {
+void CustomLcdDisplay::UpdateStockDisplay(const StockData* data, int count, const StockConfig* configs) {
     DisplayLockGuard lock(this);
 
     for (int i = 0; i < count && i < MAX_STOCKS; i++) {
+        if (configs && stock_name_labels_[i]) {
+            lv_label_set_text(stock_name_labels_[i], configs[i].name);
+            start_name_scroll_once(stock_name_labels_[i]);
+        }
+
         if (!data[i].valid) continue;
 
         // 现价
@@ -230,6 +285,14 @@ void CustomLcdDisplay::UpdateStockDisplay(const StockData* data, int count) {
         if (stock_range_labels_[i]) {
             lv_label_set_text(stock_range_labels_[i], range_buf);
         }
+    }
+
+    // 清除多余行（股票数量减少时）
+    for (int i = count; i < MAX_STOCKS; i++) {
+        if (stock_name_labels_[i]) lv_label_set_text(stock_name_labels_[i], "");
+        if (stock_price_labels_[i]) lv_label_set_text(stock_price_labels_[i], "");
+        if (stock_change_labels_[i]) lv_label_set_text(stock_change_labels_[i], "");
+        if (stock_range_labels_[i]) lv_label_set_text(stock_range_labels_[i], "");
     }
 
     // 更新底部时间

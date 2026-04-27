@@ -102,6 +102,13 @@ void CustomLcdDisplay::SetupWeatherUI() {
     lv_obj_align(sensor_label_, LV_ALIGN_TOP_LEFT, 10, 8);
     lv_label_set_text(sensor_label_, "--.-°C  --.-%");
 
+    ip_label_ = lv_label_create(screen);
+    lv_obj_set_style_text_font(ip_label_, font_small, 0);
+    lv_obj_set_style_text_color(ip_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(ip_label_, LV_OPA_60, 0);
+    lv_obj_align(ip_label_, LV_ALIGN_TOP_MID, -30, 8);
+    lv_label_set_text(ip_label_, "");
+
     // ===== 2×2 卡片网格布局 =====
     const int pad = 8;
     const int gap = 6;

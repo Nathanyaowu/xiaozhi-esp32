@@ -107,9 +107,17 @@ private:
     lv_obj_t *stock_battery_pct_label_ = nullptr;      // 状态栏电量文字
     lv_obj_t *stock_speaker_icon_img_ = nullptr;       // 状态栏音量图标
 
-    // 股票数据缓存（由 DataUpdateTask 更新）
+    // ===== 各页面 IP 地址显示 =====
+    lv_obj_t *ip_label_ = nullptr;
+
+
+    // 股票数据缓存（由 StockFetchTask 更新）
     StockData stock_data_cache_[MAX_STOCKS] = {};
-    bool stock_data_valid_ = false;
+    StockConfig stock_configs_cache_[MAX_STOCKS] = {};
+    int stock_count_cache_ = 0;
+    std::atomic<bool> stock_data_valid_{false};
+    std::atomic<bool> stock_data_dirty_{false};
+    TaskHandle_t stock_fetch_task_handle_ = nullptr;
 
     // 图片图标（不能用基类的 label，因为我们用 lv_image 而不是 Font Awesome 文字）
     lv_obj_t *wifi_icon_img_ = nullptr;
@@ -200,6 +208,8 @@ public:
     
     // 启动数据更新任务（需要在网络连接后调用）
     void StartDataUpdateTask();
+    void StartStockFetchTask();
+    static void StockFetchTask(void *arg);
     
     // 刷新右下角备忘录列表显示（从 NVS 读取后格式化显示）
     void RefreshMemoDisplay();           // 自动获取锁（外部调用用这个）
@@ -211,7 +221,7 @@ public:
     void SwitchToStockPage();
 
     // 股票页面
-    void UpdateStockDisplay(const StockData* data, int count);
+    void UpdateStockDisplay(const StockData* data, int count, const StockConfig* configs = nullptr);
     bool IsStockMode() const { return display_mode_ == MODE_STOCK; }
 
     // 番茄钟 UI 更新方法

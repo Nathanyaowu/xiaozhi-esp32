@@ -86,6 +86,8 @@ void CustomLcdDisplay::SetupPomodoroUI() {
     lv_obj_align(pomo_sensor_label_, LV_ALIGN_TOP_LEFT, 80, 11);
     lv_label_set_text(pomo_sensor_label_, "--.-°C --.-%");
 
+
+
     // 右上角状态栏胶囊
     lv_obj_t *status_bar = lv_obj_create(page);
     lv_obj_set_size(status_bar, 145, 28);
