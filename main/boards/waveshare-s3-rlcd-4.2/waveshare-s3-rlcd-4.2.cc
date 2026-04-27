@@ -15,6 +15,7 @@
 #include "mcp_server.h"
 #include "settings.h"
 #include <cJSON.h>
+#include <cmath>
 #include "lvgl.h"
 #include "managers/sensor_manager.h"
 #include "managers/sdcard_manager.h"
@@ -206,6 +207,55 @@ private:
             if (display_) display_->NotifyUserActivity();  // 记录用户活动
             // 双击：刷新所有数据（天气、传感器、时间）
             RefreshAllData();
+        });
+
+        // BOOT 按钮长按：循环切换音量档位 0→34→67→100→0，并播放0.5秒蜂鸣提示
+        boot_button_.OnLongPress([this]() {
+            if (display_) display_->NotifyUserActivity();
+
+            auto* codec = GetAudioCodec();
+            if (!codec) return;
+
+            // 四档音量循环：0 → 34 → 67 → 100 → 0
+            static const int kVolumeLevels[] = {0, 34, 67, 100};
+            static const int kNumLevels = 4;
+            int current = codec->output_volume();
+
+            // 找到当前所在档位，切到下一档
+            int next_idx = 0;
+            for (int i = 0; i < kNumLevels; i++) {
+                if (current <= kVolumeLevels[i]) {
+                    next_idx = (i + 1) % kNumLevels;
+                    break;
+                }
+                if (i == kNumLevels - 1) {
+                    next_idx = 0;  // 超过100，回到0
+                }
+            }
+            int new_vol = kVolumeLevels[next_idx];
+            codec->SetOutputVolume(new_vol);
+            ESP_LOGI(TAG, "BOOT 长按：音量切换 %d → %d", current, new_vol);
+
+            // 播放 0.5 秒 800Hz 蜂鸣声
+            // 采样率 24000Hz，0.5秒 = 12000 个采样点
+            const int sample_rate = 24000;
+            const int num_samples = sample_rate / 2;  // 0.5s = 12000 samples
+            const int freq_hz = 800;
+            std::vector<int16_t> beep_buf(num_samples);
+            // 生成正弦波，振幅 0.3（避免太刺耳），9830 ≈ 32767 * 0.3
+            for (int i = 0; i < num_samples; i++) {
+                float t = (float)i / sample_rate;
+                beep_buf[i] = (int16_t)(sinf(2.0f * M_PI * freq_hz * t) * 9830);
+            }
+            // 静音档临时设到34让用户听到"已静音"提示音
+            bool was_muted = (new_vol == 0);
+            if (was_muted) {
+                codec->SetOutputVolume(34);
+            }
+            codec->OutputData(beep_buf);
+            if (was_muted) {
+                codec->SetOutputVolume(0);
+            }
         });
 
         user_button_.OnLongPress([this]() {

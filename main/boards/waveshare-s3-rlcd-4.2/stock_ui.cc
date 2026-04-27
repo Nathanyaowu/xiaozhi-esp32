@@ -9,6 +9,7 @@
 
 #include "custom_lcd_display.h"
 #include <esp_log.h>
+#include <font_awesome.h>
 
 LV_FONT_DECLARE(alibaba_puhui_16);
 LV_FONT_DECLARE(alibaba_puhui_24);
@@ -18,10 +19,7 @@ LV_FONT_DECLARE(font_puhui_14_1);
 LV_IMAGE_DECLARE(ui_img_wifi);
 LV_IMAGE_DECLARE(ui_img_wifi_off);
 LV_IMAGE_DECLARE(ui_img_battery_full);
-LV_IMAGE_DECLARE(ui_img_speaker_off);
-LV_IMAGE_DECLARE(ui_img_speaker_low);
-LV_IMAGE_DECLARE(ui_img_speaker_medium);
-LV_IMAGE_DECLARE(ui_img_speaker_full);
+LV_FONT_DECLARE(font_awesome_20_4);
 
 static const char *TAG = "StockUI";
 
@@ -61,9 +59,11 @@ void CustomLcdDisplay::SetupStockUI() {
     lv_obj_set_flex_align(status_bar, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status_bar, 5, 0);
 
-    stock_speaker_icon_img_ = lv_image_create(status_bar);
-lv_image_set_src(stock_speaker_icon_img_, &ui_img_speaker_medium);
-stock_wifi_icon_img_ = lv_image_create(status_bar);
+    stock_speaker_icon_img_ = lv_label_create(status_bar);
+    lv_obj_set_style_text_font(stock_speaker_icon_img_, &font_awesome_20_4, 0);
+    lv_obj_set_style_text_color(stock_speaker_icon_img_, lv_color_black(), 0);
+    lv_label_set_text(stock_speaker_icon_img_, FONT_AWESOME_VOLUME);
+    stock_wifi_icon_img_ = lv_image_create(status_bar);
     lv_image_set_src(stock_wifi_icon_img_, &ui_img_wifi_off);
 
     stock_battery_icon_img_ = lv_image_create(status_bar);

@@ -11,6 +11,7 @@
 
 #include "custom_lcd_display.h"
 #include <esp_log.h>
+#include <font_awesome.h>
 
 // 声明天气站专用字体（从 MyWeatherStation 移植，字符集有限但够天气站用）
 LV_FONT_DECLARE(alibaba_puhui_16);
@@ -30,10 +31,8 @@ LV_IMAGE_DECLARE(ui_img_battery_full);
 LV_IMAGE_DECLARE(ui_img_battery_medium);
 LV_IMAGE_DECLARE(ui_img_battery_low);
 LV_IMAGE_DECLARE(ui_img_battery_charging);
-LV_IMAGE_DECLARE(ui_img_speaker_off);
-LV_IMAGE_DECLARE(ui_img_speaker_low);
-LV_IMAGE_DECLARE(ui_img_speaker_medium);
-LV_IMAGE_DECLARE(ui_img_speaker_full);
+
+LV_FONT_DECLARE(font_awesome_20_4);
 
 static const char *TAG = "WeatherUI";
 
@@ -76,9 +75,11 @@ void CustomLcdDisplay::SetupWeatherUI() {
     lv_obj_set_flex_align(status_bar, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(status_bar, 5, 0);
 
-    // 音量图标
-    speaker_icon_img_ = lv_image_create(status_bar);
-    lv_image_set_src(speaker_icon_img_, &ui_img_speaker_medium);
+    // 音量图标（Font Awesome 字符，与 WiFi/电池图标风格统一）
+    speaker_icon_img_ = lv_label_create(status_bar);
+    lv_obj_set_style_text_font(speaker_icon_img_, &font_awesome_20_4, 0);
+    lv_obj_set_style_text_color(speaker_icon_img_, lv_color_black(), 0);
+    lv_label_set_text(speaker_icon_img_, FONT_AWESOME_VOLUME);
 
     // WiFi 图标（我们自己的图片图标，不给基类用）
     wifi_icon_img_ = lv_image_create(status_bar);

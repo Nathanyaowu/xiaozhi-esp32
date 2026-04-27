@@ -28,6 +28,7 @@
 #include "managers/pomodoro_manager.h"
 #include "stock_data.h"
 #include "secret_config.h"
+#include <font_awesome.h>
 
 // 声明状态栏图标（DataUpdateTask 需要更新图标）
 LV_IMAGE_DECLARE(ui_img_wifi);
@@ -37,10 +38,7 @@ LV_IMAGE_DECLARE(ui_img_battery_full);
 LV_IMAGE_DECLARE(ui_img_battery_medium);
 LV_IMAGE_DECLARE(ui_img_battery_low);
 LV_IMAGE_DECLARE(ui_img_battery_charging);
-LV_IMAGE_DECLARE(ui_img_speaker_off);
-LV_IMAGE_DECLARE(ui_img_speaker_low);
-LV_IMAGE_DECLARE(ui_img_speaker_medium);
-LV_IMAGE_DECLARE(ui_img_speaker_full);
+LV_FONT_DECLARE(font_awesome_20_4);
 
 static const char *TAG = "DataUpdate";
 
@@ -441,28 +439,28 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                 }
             }
 
-            // 5b. 音量图标更新
+            // 5b. 音量图标更新（Font Awesome 矢量字符）
             {
                 auto* codec = Board::GetInstance().GetAudioCodec();
                 int vol = codec ? codec->output_volume() : 50;
-                const lv_image_dsc_t *spk_src;
+                const char *spk_text;
                 if (vol == 0) {
-                    spk_src = &ui_img_speaker_off;
+                    spk_text = FONT_AWESOME_VOLUME_XMARK;
                 } else if (vol <= 33) {
-                    spk_src = &ui_img_speaker_low;
+                    spk_text = FONT_AWESOME_VOLUME_LOW;
                 } else if (vol <= 66) {
-                    spk_src = &ui_img_speaker_medium;
+                    spk_text = FONT_AWESOME_VOLUME;
                 } else {
-                    spk_src = &ui_img_speaker_full;
+                    spk_text = FONT_AWESOME_VOLUME_HIGH;
                 }
                 if (self->speaker_icon_img_)
-                    lv_image_set_src(self->speaker_icon_img_, spk_src);
+                    lv_label_set_text(self->speaker_icon_img_, spk_text);
                 if (self->music_speaker_icon_img_)
-                    lv_image_set_src(self->music_speaker_icon_img_, spk_src);
+                    lv_label_set_text(self->music_speaker_icon_img_, spk_text);
                 if (self->pomo_speaker_icon_img_)
-                    lv_image_set_src(self->pomo_speaker_icon_img_, spk_src);
+                    lv_label_set_text(self->pomo_speaker_icon_img_, spk_text);
                 if (self->stock_speaker_icon_img_)
-                    lv_image_set_src(self->stock_speaker_icon_img_, spk_src);
+                    lv_label_set_text(self->stock_speaker_icon_img_, spk_text);
             }
 
             // 6. AI 状态更新
