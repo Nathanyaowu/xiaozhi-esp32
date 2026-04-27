@@ -15,6 +15,7 @@
 
 #include "settings.h"
 #include "stock_data.h"
+#include "custom_lcd_display.h"
 
 static const char *TAG = "WebConfig";
 
@@ -99,6 +100,24 @@ A股(深)：主板000/001、中小板002、创业板300/301、ETF 159xxx<br>
 </div>
 <button class="btn btn-add" style="margin-top:10px" onclick="saveInterval()">保存</button>
 </div>
+<h2 style="margin-top:20px">📝 备忘录</h2>
+<div class="card">
+<table>
+<thead><tr><th>日期</th><th>时间</th><th>内容</th><th></th></tr></thead>
+<tbody id="memolist"></tbody>
+</table>
+<div id="memoempty" class="empty" style="display:none">暂无备忘</div>
+</div>
+<div class="card">
+<h3 style="margin-bottom:8px;font-size:14px;color:#666">添加备忘</h3>
+<div class="add-form">
+<label>日期<input id="memodate" type="date" style="width:140px"></label>
+<label>时间<input id="memotime" placeholder="如 15:00 (可选)" style="width:120px"></label>
+<label>内容<input id="memocontent" placeholder="备忘内容" style="width:160px"></label>
+<button class="btn btn-add" onclick="addMemo()">添加</button>
+</div>
+<p style="font-size:12px;color:#888;margin-top:8px">日期不填=当天触发；时间不填=仅显示不提醒</p>
+</div>
 <script>
 let stocks=[];
 const MKT_PREFIX=['sh','sz','hk','gb_'];
@@ -164,6 +183,43 @@ function saveInterval(){
 
 fetch('/api/stock').then(r=>r.json()).then(d=>{stocks=d;render()}).catch(()=>render());
 fetch('/api/stock/interval').then(r=>r.json()).then(d=>{document.getElementById('interval').value=d.interval||30}).catch(()=>{});
+
+let memos=[];
+function renderMemo(){
+  const tb=document.getElementById('memolist');
+  const emp=document.getElementById('memoempty');
+  if(memos.length===0){tb.innerHTML='';emp.style.display='block';return;}
+  emp.style.display='none';
+  tb.innerHTML=memos.map((m,i)=>
+    `<tr><td>${m.d||'今天'}</td><td>${m.t||'-'}</td><td>${m.c}</td><td><button class="del-btn" onclick="delMemo(${i})">✕</button></td></tr>`
+  ).join('');
+}
+function delMemo(i){
+  memos.splice(i,1);
+  saveMemo();
+}
+function addMemo(){
+  if(memos.length>=10){showMsg('最多10条备忘',false);return;}
+  const d=document.getElementById('memodate').value;
+  const t=document.getElementById('memotime').value.trim();
+  const c=document.getElementById('memocontent').value.trim();
+  if(!c){showMsg('请输入备忘内容',false);return;}
+  if(c.length>48){showMsg('内容过长(最多48字符)',false);return;}
+  if(t&&!/^\d{2}:\d{2}$/.test(t)){showMsg('时间格式应为 HH:MM',false);return;}
+  if(t){const[h,m]=[parseInt(t),parseInt(t.slice(3))];if(h>23||m>59){showMsg('时间无效(00:00~23:59)',false);return;}}
+  memos.push({t:t,c:c,d:d});
+  document.getElementById('memodate').value='';
+  document.getElementById('memotime').value='';
+  document.getElementById('memocontent').value='';
+  saveMemo();
+}
+function saveMemo(){
+  fetch('/api/memo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(memos)})
+  .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'保存失败')});return r.json()})
+  .then(()=>{showMsg('备忘已保存',true);renderMemo()})
+  .catch(e=>showMsg(e.message,false));
+}
+fetch('/api/memo').then(r=>r.json()).then(d=>{memos=d;renderMemo()}).catch(()=>renderMemo());
 </script>
 </body>
 </html>
@@ -437,6 +493,111 @@ static esp_err_t HandlePostInterval(httpd_req_t *req) {
 }
 
 // ============================================================
+// 备忘录 GET/POST
+// ============================================================
+
+static esp_err_t HandleGetMemo(httpd_req_t *req) {
+    Settings settings("memo", false);
+    std::string json = settings.GetString("items", "[]");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, json.c_str());
+    return ESP_OK;
+}
+
+static esp_err_t HandlePostMemo(httpd_req_t *req) {
+    char buf[MAX_POST_BODY_LEN];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"empty body\"}");
+        return ESP_OK;
+    }
+    buf[received] = '\0';
+
+    cJSON *arr = cJSON_Parse(buf);
+    if (!arr || !cJSON_IsArray(arr)) {
+        if (arr) cJSON_Delete(arr);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"expected JSON array\"}");
+        return ESP_OK;
+    }
+
+    int count = cJSON_GetArraySize(arr);
+    if (count > 10) {
+        cJSON_Delete(arr);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"max 10 memos\"}");
+        return ESP_OK;
+    }
+
+    for (int i = 0; i < count; i++) {
+        cJSON *item = cJSON_GetArrayItem(arr, i);
+        cJSON *t = cJSON_GetObjectItem(item, "t");
+        cJSON *c = cJSON_GetObjectItem(item, "c");
+
+        if (!cJSON_IsString(c) || strlen(c->valuestring) == 0 || strlen(c->valuestring) > 48) {
+            cJSON_Delete(arr);
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_set_type(req, "application/json");
+            char err[80];
+            snprintf(err, sizeof(err), "{\"error\":\"item %d: content invalid\"}", i);
+            httpd_resp_sendstr(req, err);
+            return ESP_OK;
+        }
+
+        if (t && cJSON_IsString(t) && strlen(t->valuestring) > 0) {
+            const char *tv = t->valuestring;
+            if (strlen(tv) != 5 || tv[2] != ':' ||
+                !isdigit(tv[0]) || !isdigit(tv[1]) || !isdigit(tv[3]) || !isdigit(tv[4])) {
+                cJSON_Delete(arr);
+                httpd_resp_set_status(req, "400 Bad Request");
+                httpd_resp_set_type(req, "application/json");
+                char err[80];
+                snprintf(err, sizeof(err), "{\"error\":\"item %d: time format HH:MM\"}", i);
+                httpd_resp_sendstr(req, err);
+                return ESP_OK;
+            }
+        }
+
+        cJSON *d = cJSON_GetObjectItem(item, "d");
+        if (d && cJSON_IsString(d) && strlen(d->valuestring) > 0) {
+            const char *dv = d->valuestring;
+            if (strlen(dv) != 10 || dv[4] != '-' || dv[7] != '-') {
+                cJSON_Delete(arr);
+                httpd_resp_set_status(req, "400 Bad Request");
+                httpd_resp_set_type(req, "application/json");
+                char err[80];
+                snprintf(err, sizeof(err), "{\"error\":\"item %d: date format YYYY-MM-DD\"}", i);
+                httpd_resp_sendstr(req, err);
+                return ESP_OK;
+            }
+        }
+    }
+
+    char *json_str = cJSON_PrintUnformatted(arr);
+    cJSON_Delete(arr);
+
+    if (json_str) {
+        Settings settings("memo", true);
+        settings.SetString("items", json_str);
+        ESP_LOGI(TAG, "备忘录已更新: %s", json_str);
+        free(json_str);
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+
+    extern CustomLcdDisplay* g_display_instance;
+    if (g_display_instance) {
+        g_display_instance->RefreshMemoDisplay();
+    }
+
+    return ESP_OK;
+}
+
+// ============================================================
 // Server 启动/停止
 // ============================================================
 
@@ -444,7 +605,7 @@ void WebConfigServer::Start() {
     if (started_) return;
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 10;
     config.stack_size = 4096;
     config.lru_purge_enable = true;
 
@@ -492,6 +653,21 @@ void WebConfigServer::Start() {
     };
     httpd_register_uri_handler(server_, &uri_get_interval);
     httpd_register_uri_handler(server_, &uri_post_interval);
+
+    httpd_uri_t uri_get_memo = {
+        .uri = "/api/memo",
+        .method = HTTP_GET,
+        .handler = HandleGetMemo,
+        .user_ctx = nullptr
+    };
+    httpd_uri_t uri_post_memo = {
+        .uri = "/api/memo",
+        .method = HTTP_POST,
+        .handler = HandlePostMemo,
+        .user_ctx = nullptr
+    };
+    httpd_register_uri_handler(server_, &uri_get_memo);
+    httpd_register_uri_handler(server_, &uri_post_memo);
 
     started_ = true;
     ESP_LOGI(TAG, "Web 配置服务器已启动 (端口 80)");

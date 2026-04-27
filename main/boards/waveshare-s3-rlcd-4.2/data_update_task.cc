@@ -45,6 +45,7 @@ LV_FONT_DECLARE(font_awesome_20_4);
 static const char *TAG = "DataUpdate";
 
 TaskHandle_t g_stock_fetch_task_handle = nullptr;
+CustomLcdDisplay* g_display_instance = nullptr;
 
 void CustomLcdDisplay::StartDataUpdateTask() {
     // 暂时停用板载和风天气 API 配置，改为由 MCP 工具写入天气缓存
@@ -60,6 +61,7 @@ void CustomLcdDisplay::StartDataUpdateTask() {
 
 void CustomLcdDisplay::DataUpdateTask(void *arg) {
     CustomLcdDisplay *self = (CustomLcdDisplay *)arg;
+    g_display_instance = self;
     bool time_synced = false;
     
     // NTP 指数退避重试参数
@@ -268,27 +270,27 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                             cJSON *memo_item = cJSON_GetArrayItem(memo_arr, mi);
                             cJSON *mt = cJSON_GetObjectItem(memo_item, "t");
                             cJSON *mc = cJSON_GetObjectItem(memo_item, "c");
-                            
-                            // 🔍 调试：打印每条备忘的时间
-                            if (mt && mt->valuestring) {
-                                ESP_LOGI(TAG, "⏰ 检查备忘[%d]: 时间=%s, 内容=%s", 
-                                         mi, mt->valuestring, 
-                                         (mc && mc->valuestring) ? mc->valuestring : "(空)");
-                            }
+                            cJSON *md = cJSON_GetObjectItem(memo_item, "d");
                             
                             // 只匹配 "HH:MM" 格式（5个字符，中间是冒号）
                             if (mt && mt->valuestring && strlen(mt->valuestring) == 5 
                                 && mt->valuestring[2] == ':') {
+                                // 有日期字段时，检查是否是今天
+                                if (md && cJSON_IsString(md) && strlen(md->valuestring) == 10) {
+                                    char date_buf[16];
+                                    strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", &timeinfo);
+                                    if (strcmp(md->valuestring, date_buf) != 0) {
+                                        continue;  // 不是今天，跳过
+                                    }
+                                }
                                 if (strcmp(mt->valuestring, time_buf) == 0) {
                                     const char *memo_text = (mc && mc->valuestring) ? mc->valuestring : "备忘提醒";
                                     char alert_buf[128];
                                     snprintf(alert_buf, sizeof(alert_buf), "备忘提醒: %s %s", mt->valuestring, memo_text);
                                     ESP_LOGI(TAG, "🔔 触发备忘闹钟: %s", alert_buf);
                                     
-                                    // 播放提示音 + 屏幕显示提醒
                                     app.Alert("提醒", alert_buf, "happy", Lang::Sounds::OGG_POPUP);
 
-                                    // 触发后从列表中删除这条
                                     cJSON_DeleteItemFromArray(memo_arr, mi);
                                     memo_changed = true;
                                 }

@@ -799,23 +799,30 @@ private:
          */
         mcp_server.AddTool("self.memo.add",
             "Add a memo / reminder / todo item. It will be persistently displayed on the device screen and survives reboot.\n"
-            "Use when user says: '提醒我下午3点开会', '记住买牛奶', '待办写周报'\n"
+            "Use when user says: '提醒我下午3点开会', '记住买牛奶', '明天提醒我...'\n"
             "Args:\n"
             "  `content`: Short memo text (max ~8 Chinese chars for best display on the small screen)\n"
             "  `time`: Time label in strict HH:MM 24-hour format (e.g. '07:30', '15:00'). Empty string if no specific time.\n"
+            "  `date`: Date in YYYY-MM-DD format (e.g. '2026-04-28'). Empty string means today.\n"
             "Important:\n"
-            "  - You MUST convert relative expressions to HH:MM before calling this tool.\n"
-            "  - Examples: '5分钟后' -> '21:18', '半小时后' -> '21:43', '晚上8点' -> '20:00'.\n"
+            "  - You MUST convert relative expressions before calling this tool.\n"
+            "  - Time: '5分钟后' -> '21:18', '半小时后' -> '21:43', '晚上8点' -> '20:00'.\n"
+            "  - Date: '明天' -> '2026-04-28', '后天' -> '2026-04-29', '下周一' -> actual date.\n"
             "  - Do NOT pass natural language like '5分钟后' or '明天'.",
             PropertyList({
                 Property("content", kPropertyTypeString),
-                Property("time", kPropertyTypeString, std::string(""))
+                Property("time", kPropertyTypeString, std::string("")),
+                Property("date", kPropertyTypeString, std::string(""))
             }),
             [this](const PropertyList& properties) -> ReturnValue {
                 auto content = properties["content"].value<std::string>();
                 auto time_str = properties["time"].value<std::string>();
+                auto date_str = properties["date"].value<std::string>();
                 if (!IsValidMemoTimeLabel(time_str)) {
-                    return std::string("时间格式无效：请使用 HH:MM（24小时制），例如 07:30、15:00；不要传“5分钟后”这类自然语言");
+                    return std::string("时间格式无效：请使用 HH:MM（24小时制），例如 07:30、15:00；不要传自然语言");
+                }
+                if (!date_str.empty() && (date_str.length() != 10 || date_str[4] != '-' || date_str[7] != '-')) {
+                    return std::string("日期格式无效：请使用 YYYY-MM-DD，例如 2026-04-28");
                 }
 
                 // 读取现有列表
@@ -838,6 +845,7 @@ private:
                 cJSON *item = cJSON_CreateObject();
                 cJSON_AddStringToObject(item, "t", time_str.c_str());
                 cJSON_AddStringToObject(item, "c", content.c_str());
+                cJSON_AddStringToObject(item, "d", date_str.c_str());
                 cJSON_AddItemToArray(arr, item);
 
                 // 写回 NVS
