@@ -6,6 +6,7 @@
 
 主要增强功能：
 - 股票行情页（新浪财经 API，支持 A 股/港股/美股）
+- Web 配置服务（股票自选、刷新间隔、备忘录管理）
 - 状态栏音量图标（Font Awesome 矢量字符，四级动态切换）
 - BOOT 长按切换音量档位（0%→34%→67%→100% 循环 + 0.5s 蜂鸣反馈）
 - 系统信息滚动显示修复
@@ -37,3 +38,75 @@ feat/rlcd-enhancements （所有定制功能在此分支）
 3. 用户 review 代码，烧录固件到设备上验证功能。
 4. 用户确认通过 → Agent 提交（或用户手动提交）。
 5. 用户执行 push 到远程仓库。
+
+## 技术架构
+
+### 屏幕与 UI
+- 屏幕：400×300 RLCD 单色（黑/白）
+- UI 框架：LVGL
+- `lv_anim_set_completed_cb`（非 `ready_cb`），`lv_anim_delete`（非 `lv_anim_del`），`lv_coord_t = int32_t`
+- `LV_LABEL_LONG_SCROLL` 是持续来回滚动，没有"滚一次停止"内置模式，需手动 `lv_anim_t`
+
+### Web 配置服务
+- 文件：`web_config_server.h/cc`（嵌入式 HTML + REST API）
+- HTTP Server：`esp_http_server`，WiFi 连接后启动，空闲时零 CPU 开销
+- 命名：通用名 `web_config_server`（非 stock_xxx），后续扩展其他设备配置
+- 数据校验：JSON 格式、字段类型、code 格式白名单、name 长度限制、market 范围、数量上限
+
+### NVS 存储
+- 分区大小 16KB（`0x4000`）
+- namespace `stock`, key `list` → JSON 数组 `[{"code":"sh600519","name":"贵州茅台","market":0},...]`
+- namespace `stock`, key `interval` → int (5~300, 默认 30)
+- namespace `memo`, key `items` → JSON 数组 `[{"t":"15:00","c":"开会","d":"2026-04-28"},...]`
+
+### 股票数据获取
+- 独立 FreeRTOS task（`StockFetchTask`），与 UI 更新解耦
+- 新浪财经 API，A 股/港股名称返回 GBK 编码（项目使用用户配置的 UTF-8 名称，不做转码）
+- 科创板 688 开头属于上交所，前缀用 `sh` 不是 `sz`
+- `FetchStockData` 无论返回值都必须更新缓存（否则旧数据残留）
+- `GetStockConfigs` 空数组时返回 0（不回退默认股票）
+
+### 全局指针桥接
+```cpp
+// data_update_task.cc
+TaskHandle_t g_stock_fetch_task_handle = nullptr;
+CustomLcdDisplay* g_display_instance = nullptr;
+// web_config_server.cc 通过 extern 访问
+```
+
+### 通信协议（文字聊天调研中）
+- `Protocol::SendText()` 可发送 JSON 文本到服务端
+- `Protocol::SendStartListening()` 发送 listen/start 消息
+- 支持 WebSocket 和 MQTT+UDP 两种通信协议
+- 协议文档：`docs/websocket.md`, `docs/mqtt-udp.md`
+
+### 构建
+```bash
+cd /home/nathan/rlcd/own/xiaozhi-esp32
+source /home/nathan/esp/esp-idf/export.sh > /dev/null 2>&1
+idf.py build 2>&1 | tail -20
+```
+
+### LSP 已知误报
+- `Unknown argument '-mlongcalls'`、`std::string (aka 'int')`、`No matching constructor for 'DisplayLockGuard'` 等错误都是 clangd 无法正确解析 ESP-IDF xtensa 交叉编译环境导致的误报，实际 `idf.py build` 编译正常
+
+## 关键文件
+
+| 文件路径 | 说明 |
+|---|---|
+| `main/boards/waveshare-s3-rlcd-4.2/web_config_server.h/cc` | Web 配置服务（HTML + REST API） |
+| `main/boards/waveshare-s3-rlcd-4.2/custom_lcd_display.h/cc` | 自定义 LCD 显示类 |
+| `main/boards/waveshare-s3-rlcd-4.2/data_update_task.cc` | DataUpdateTask + StockFetchTask + 备忘闹钟 |
+| `main/boards/waveshare-s3-rlcd-4.2/stock_data.h/cc` | 股票配置读取（NVS） |
+| `main/boards/waveshare-s3-rlcd-4.2/stock_ui.cc` | 股票页 UI（滚动动画、停牌提示） |
+| `main/boards/waveshare-s3-rlcd-4.2/waveshare-s3-rlcd-4.2.cc` | MCP 工具定义（self.memo.add 等） |
+| `main/boards/waveshare-s3-rlcd-4.2/weather_ui.cc` | 天气页（含 IP 显示） |
+| `main/protocols/protocol.h/cc` | Protocol 基类 |
+| `main/protocols/websocket_protocol.cc` | WebSocket 协议实现 |
+
+## 编码注意事项
+
+- `std::string` 中不要使用中文引号 `"` `"`，会被编译器当作字符串终止符
+- `WifiStation` 没有 `GetInstance()`，正确用法：`WifiManager::GetInstance()`，需 `#include "wifi_manager.h"`
+- POST 数据必须严格校验（防崩溃）
+- 备忘录时间校验只检格式不检范围（避免旧数据阻塞新增）

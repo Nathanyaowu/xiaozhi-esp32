@@ -16,6 +16,8 @@
 #include "settings.h"
 #include "stock_data.h"
 #include "custom_lcd_display.h"
+#include "board.h"
+#include "audio_codec.h"
 
 static const char *TAG = "WebConfig";
 
@@ -99,6 +101,16 @@ A股(深)：主板000/001、中小板002、创业板300/301、ETF 159xxx<br>
 <label>刷新间隔<input id="interval" type="number" min="5" max="300" value="30" style="width:60px">秒</label>
 </div>
 <button class="btn btn-add" style="margin-top:10px" onclick="saveInterval()">保存</button>
+</div>
+<h2 style="margin-top:20px">⚙️ 系统设置</h2>
+<div class="card">
+<h3 style="margin-bottom:8px;font-size:14px;color:#666">音量控制</h3>
+<div class="add-form" style="align-items:center">
+<input id="volume" type="range" min="0" max="100" value="50" style="width:200px" oninput="document.getElementById('vol-val').textContent=this.value+'%'">
+<span id="vol-val" style="font-size:14px;min-width:40px">50%</span>
+<button class="btn btn-add" onclick="saveVolume()">设置</button>
+</div>
+<p style="font-size:12px;color:#888;margin-top:8px">快捷档位：0% / 34% / 67% / 100%（与BOOT长按一致）</p>
 </div>
 <h2 style="margin-top:20px">📝 备忘录</h2>
 <div class="card">
@@ -220,6 +232,19 @@ function saveMemo(){
   .catch(e=>showMsg(e.message,false));
 }
 fetch('/api/memo').then(r=>r.json()).then(d=>{memos=d;renderMemo()}).catch(()=>renderMemo());
+
+function saveVolume(){
+  const v=parseInt(document.getElementById('volume').value);
+  fetch('/api/volume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({volume:v})})
+  .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'设置失败')});return r.json()})
+  .then(()=>showMsg('音量已设置为 '+v+'%',true))
+  .catch(e=>showMsg(e.message,false));
+}
+fetch('/api/volume').then(r=>r.json()).then(d=>{
+  const v=d.volume||50;
+  document.getElementById('volume').value=v;
+  document.getElementById('vol-val').textContent=v+'%';
+}).catch(()=>{});
 </script>
 </body>
 </html>
@@ -598,6 +623,59 @@ static esp_err_t HandlePostMemo(httpd_req_t *req) {
 }
 
 // ============================================================
+// 音量 GET/POST
+// ============================================================
+
+static esp_err_t HandleGetVolume(httpd_req_t *req) {
+    auto* codec = Board::GetInstance().GetAudioCodec();
+    int vol = codec ? codec->output_volume() : 50;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "{\"volume\":%d}", vol);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+static esp_err_t HandlePostVolume(httpd_req_t *req) {
+    char buf[64];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"empty body\"}");
+        return ESP_OK;
+    }
+    buf[received] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"invalid JSON\"}");
+        return ESP_OK;
+    }
+
+    cJSON *val = cJSON_GetObjectItem(root, "volume");
+    if (!cJSON_IsNumber(val) || val->valueint < 0 || val->valueint > 100) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"volume must be 0~100\"}");
+        return ESP_OK;
+    }
+
+    int volume = val->valueint;
+    cJSON_Delete(root);
+
+    auto* codec = Board::GetInstance().GetAudioCodec();
+    if (codec) {
+        codec->SetOutputVolume(volume);
+        ESP_LOGI(TAG, "Web 设置音量: %d%%", volume);
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+// ============================================================
 // Server 启动/停止
 // ============================================================
 
@@ -668,6 +746,21 @@ void WebConfigServer::Start() {
     };
     httpd_register_uri_handler(server_, &uri_get_memo);
     httpd_register_uri_handler(server_, &uri_post_memo);
+
+    httpd_uri_t uri_get_volume = {
+        .uri = "/api/volume",
+        .method = HTTP_GET,
+        .handler = HandleGetVolume,
+        .user_ctx = nullptr
+    };
+    httpd_uri_t uri_post_volume = {
+        .uri = "/api/volume",
+        .method = HTTP_POST,
+        .handler = HandlePostVolume,
+        .user_ctx = nullptr
+    };
+    httpd_register_uri_handler(server_, &uri_get_volume);
+    httpd_register_uri_handler(server_, &uri_post_volume);
 
     started_ = true;
     ESP_LOGI(TAG, "Web 配置服务器已启动 (端口 80)");
