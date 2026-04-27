@@ -251,7 +251,16 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                 if (self->pomo_time_label_) lv_label_set_text(self->pomo_time_label_, time_buf);
 
                 const char *weeks_en[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-                if (self->day_label_) lv_label_set_text(self->day_label_, weeks_en[timeinfo.tm_wday]);
+                const char *weeks_cn[] = {
+                    "\xe6\x98\x9f\xe6\x9c\x9f\xe6\x97\xa5",
+                    "\xe6\x98\x9f\xe6\x9c\x9f\xe4\xb8\x80",
+                    "\xe6\x98\x9f\xe6\x9c\x9f\xe4\xba\x8c",
+                    "\xe6\x98\x9f\xe6\x9c\x9f\xe4\xb8\x89",
+                    "\xe6\x98\x9f\xe6\x9c\x9f\xe5\x9b\x9b",
+                    "\xe6\x98\x9f\xe6\x9c\x9f\xe4\xba\x94",
+                    "\xe6\x98\x9f\xe6\x9c\x9f\xe5\x85\xad"
+                };
+                if (self->day_label_) lv_label_set_text(self->day_label_, weeks_cn[timeinfo.tm_wday]);
 
                 char date_buf[16];
                 strftime(date_buf, sizeof(date_buf), "%Y/%m/%d", &timeinfo);
