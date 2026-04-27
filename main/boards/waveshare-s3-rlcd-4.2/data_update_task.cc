@@ -48,11 +48,10 @@ TaskHandle_t g_stock_fetch_task_handle = nullptr;
 CustomLcdDisplay* g_display_instance = nullptr;
 
 void CustomLcdDisplay::StartDataUpdateTask() {
-    // 暂时停用板载和风天气 API 配置，改为由 MCP 工具写入天气缓存
-    // WeatherManager::getInstance().setApiConfig(
-    //     WEATHER_API_KEY,
-    //     WEATHER_API_HOST
-    // );
+    WeatherManager::getInstance().setApiConfig(
+        WEATHER_API_KEY,
+        WEATHER_API_HOST
+    );
     
     // 栈从 16KB 下调到 8KB，给音频/MQTT 留更多 SRAM 余量
     // 优先级保持较低，避免与语音收发实时链路抢占 CPU
@@ -187,8 +186,22 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
             }
         }
         
-        // ===== 天气更新 =====
-        // 暂时停用板载和风天气自动拉取，天气由 AI 通过 MCP 主动写入
+        // ===== 天气更新（每24小时拉取一次和风天气 API）=====
+        static uint32_t last_weather_fetch_ms = 0;
+        const uint32_t WEATHER_FETCH_INTERVAL = 24 * 60 * 60 * 1000;
+        if (network_connected && idle_long_enough && time_synced) {
+            bool should_fetch_weather = (last_weather_fetch_ms == 0) ||
+                                        (now_ms - last_weather_fetch_ms >= WEATHER_FETCH_INTERVAL);
+            if (should_fetch_weather) {
+                ESP_LOGI(TAG, "拉取和风天气数据...");
+                if (WeatherManager::getInstance().update()) {
+                    last_weather_fetch_ms = now_ms;
+                    ESP_LOGI(TAG, "天气数据更新成功");
+                } else {
+                    ESP_LOGW(TAG, "天气数据更新失败，下次循环重试");
+                }
+            }
+        }
         
         // ===== 时间获取（在锁外也需要用，所以先获取）=====
         time_t now;

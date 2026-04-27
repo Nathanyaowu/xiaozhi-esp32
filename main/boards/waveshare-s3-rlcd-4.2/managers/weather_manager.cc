@@ -137,9 +137,9 @@ bool WeatherManager::update() {
     esp_err_t geo_err = esp_http_client_perform(geo_client);
     int geo_status = esp_http_client_get_status_code(geo_client);
     
-    // 默认位置（苏州）
-    double lat = 31.23, lon = 120.62; 
-    std::string city_name = "苏州";
+    // 默认位置（北京）
+    double lat = 39.90, lon = 116.41; 
+    std::string city_name = "北京";
 
     if (geo_err == ESP_OK && geo_status == 200 && response_len > 0) {
         // geo 响应也可能是 gzip 压缩的，先尝试解压

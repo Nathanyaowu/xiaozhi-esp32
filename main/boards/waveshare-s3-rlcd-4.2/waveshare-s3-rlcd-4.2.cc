@@ -407,16 +407,13 @@ private:
      */
     void RefreshAllData() {
         ESP_LOGI(TAG, "手动刷新所有数据...");
-        
-        // 暂时停用板载和风天气拉取，天气请通过 MCP 工具 self.weather.update 刷新
-        // WeatherManager::getInstance().update();
-        
+
         // 重新同步 NTP 时间
         SensorManager::getInstance().syncNtpTime();
         
         // 强制刷新屏幕显示
         if (display_) {
-            display_->SetChatMessage("system", "正在刷新数据...\n时间已更新，天气等待 MCP 同步");
+            display_->SetChatMessage("system", "正在刷新数据...\n时间已更新");
         }
         
         ESP_LOGI(TAG, "数据刷新完成");
