@@ -23,8 +23,9 @@ public:
     // 番茄钟状态（简化版：只有空闲、倒计时中、已暂停）
     enum State {
         IDLE = 0,       // 空闲（未启动）
-        COUNTING,       // 倒计时中
+        COUNTING,       // 专注倒计时中
         PAUSED,         // 已暂停
+        BREAKING,       // 休息倒计时中
     };
 
     static PomodoroManager& getInstance() {
@@ -32,10 +33,13 @@ public:
         return instance;
     }
 
-    // 开始倒计时（minutes: 倒计时分钟数, white_noise: 是否播放白噪音）
-    bool start(int minutes = 25, bool white_noise = true);
+    // 开始专注倒计时
+    bool start(int minutes = 25, bool white_noise = true, int break_min = 5);
 
-    // 停止（停止倒计时 + 停止白噪音）
+    // 开始休息倒计时
+    bool startBreak(int minutes = 5);
+
+    // 停止
     void stop();
 
     // 暂停/恢复
@@ -88,7 +92,9 @@ private:
     std::atomic<bool> noise_stop_requested_{false};
 
     int minutes_ = 25;
-    bool play_white_noise_ = true;
+    int break_minutes_ = 5;
+    bool play_white_noise_ = false;
+    State paused_from_ = COUNTING;
 
     TaskHandle_t pomodoro_task_handle_ = nullptr;
     TaskHandle_t noise_task_handle_ = nullptr;

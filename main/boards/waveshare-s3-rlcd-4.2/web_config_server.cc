@@ -159,6 +159,13 @@ A股(深)：主板000/001、中小板002、创业板300/301、ETF 159xxx<br>
 <button class="btn btn-add" onclick="saveCity()">保存</button>
 </div>
 <p style="font-size:12px;color:#888;margin-top:8px">保存后将立即同步天气数据</p>
+<h3 style="margin:16px 0 8px;font-size:14px;color:#666">番茄钟</h3>
+<div class="add-form" style="align-items:center;flex-wrap:wrap;gap:8px">
+<label style="font-size:13px">专注 <input id="pomo-focus" type="number" min="1" max="300" value="25" style="width:50px;padding:4px"> 分钟</label>
+<label style="font-size:13px">休息 <input id="pomo-break" type="number" min="1" max="300" value="5" style="width:50px;padding:4px"> 分钟</label>
+<button class="btn btn-add" onclick="savePomodoro()">保存</button>
+</div>
+<p style="font-size:12px;color:#888;margin-top:8px">长按USER键启动番茄钟（番茄钟页面时）</p>
 </div>
 <h2 style="margin-top:20px">📝 备忘录</h2>
 <div class="card">
@@ -303,6 +310,19 @@ function saveCity(){
 }
 fetch('/api/weather/city').then(r=>r.json()).then(d=>{
   if(d.city)document.getElementById('city').value=d.city;
+}).catch(()=>{});
+
+function savePomodoro(){
+  const f=parseInt(document.getElementById('pomo-focus').value)||25;
+  const b=parseInt(document.getElementById('pomo-break').value)||5;
+  fetch('/api/pomodoro',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({focus:f,break_min:b})})
+  .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'保存失败')});return r.json()})
+  .then(()=>showMsg('番茄钟设置已保存',true))
+  .catch(e=>showMsg(e.message,false));
+}
+fetch('/api/pomodoro').then(r=>r.json()).then(d=>{
+  document.getElementById('pomo-focus').value=d.focus||25;
+  document.getElementById('pomo-break').value=d.break_min||5;
 }).catch(()=>{});
 </script>
 </body>
@@ -862,6 +882,69 @@ static esp_err_t HandlePostWeatherCity(httpd_req_t *req) {
 }
 
 // ============================================================
+// 番茄钟设置 GET/POST
+// ============================================================
+
+static esp_err_t HandleGetPomodoro(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    Settings settings("pomodoro", false);
+    int focus = settings.GetInt("focus", 25);
+    int break_min = settings.GetInt("break", 5);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"focus\":%d,\"break_min\":%d}", focus, break_min);
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+static esp_err_t HandlePostPomodoro(httpd_req_t *req) {
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"empty body\"}");
+        return ESP_OK;
+    }
+    buf[received] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"invalid JSON\"}");
+        return ESP_OK;
+    }
+
+    cJSON *focus_val = cJSON_GetObjectItem(root, "focus");
+    cJSON *break_val = cJSON_GetObjectItem(root, "break_min");
+    if (!focus_val || !cJSON_IsNumber(focus_val) || !break_val || !cJSON_IsNumber(break_val)) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"missing focus/break_min\"}");
+        return ESP_OK;
+    }
+
+    int focus = focus_val->valueint;
+    int break_min = break_val->valueint;
+    if (focus < 1 || focus > 300 || break_min < 1 || break_min > 300) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"error\":\"focus: 1-300, break: 1-300\"}");
+        return ESP_OK;
+    }
+
+    {
+        Settings settings("pomodoro", true);
+        settings.SetInt("focus", focus);
+        settings.SetInt("break", break_min);
+    }
+    ESP_LOGI(TAG, "Web 设置番茄钟: 专注%d分钟, 休息%d分钟", focus, break_min);
+
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+// ============================================================
 // Server 启动/停止
 // ============================================================
 
@@ -869,7 +952,7 @@ void WebConfigServer::Start() {
     if (started_) return;
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 14;
     config.stack_size = 4096;
     config.lru_purge_enable = true;
 
@@ -962,6 +1045,21 @@ void WebConfigServer::Start() {
     };
     httpd_register_uri_handler(server_, &uri_get_city);
     httpd_register_uri_handler(server_, &uri_post_city);
+
+    httpd_uri_t uri_get_pomodoro = {
+        .uri = "/api/pomodoro",
+        .method = HTTP_GET,
+        .handler = HandleGetPomodoro,
+        .user_ctx = nullptr
+    };
+    httpd_uri_t uri_post_pomodoro = {
+        .uri = "/api/pomodoro",
+        .method = HTTP_POST,
+        .handler = HandlePostPomodoro,
+        .user_ctx = nullptr
+    };
+    httpd_register_uri_handler(server_, &uri_get_pomodoro);
+    httpd_register_uri_handler(server_, &uri_post_pomodoro);
 
     started_ = true;
     ESP_LOGI(TAG, "Web 配置服务器已启动 (端口 80)");

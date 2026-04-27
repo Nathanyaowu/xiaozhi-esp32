@@ -588,7 +588,6 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
             auto& pomo = PomodoroManager::getInstance();
             auto pomo_state = pomo.getState();
             if (pomo_state != PomodoroManager::IDLE && self->pomo_countdown_label_) {
-                // 计算进度（千分比）
                 int total = pomo.getTotalSeconds();
                 int remaining = pomo.getRemainingSeconds();
                 int progress = 0;
@@ -596,17 +595,16 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                     progress = ((total - remaining) * 1000) / total;
                 }
 
-                // 状态文字
-                const char* state_text = "倒计时中";
+                const char* state_text = "专注中";
                 if (pomo_state == PomodoroManager::PAUSED) {
                     state_text = "已暂停";
+                } else if (pomo_state == PomodoroManager::BREAKING) {
+                    state_text = "休息中";
                 }
 
-                // 设定信息
                 char info_buf[64];
                 snprintf(info_buf, sizeof(info_buf), "共 %d 分钟", pomo.getMinutes());
 
-                // 更新 UI
                 self->UpdatePomodoroDisplay(
                     state_text,
                     pomo.getRemainingTimeStr().c_str(),
@@ -619,20 +617,35 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                 if (ds != kDeviceStateSpeaking) {
                     DisplayLockGuard pomo_lock(self);
                     if (self->pomo_emotion_label_) {
-                        const char* pomo_emoji = (pomo_state == PomodoroManager::PAUSED) ? "暂停" : "专注";
+                        const char* pomo_emoji = "专注";
+                        if (pomo_state == PomodoroManager::PAUSED) pomo_emoji = "暂停";
+                        else if (pomo_state == PomodoroManager::BREAKING) pomo_emoji = "休息";
                         lv_label_set_text(self->pomo_emotion_label_, pomo_emoji);
                     }
                     if (self->pomo_chat_status_label_) {
                         char pomo_status_buf[64];
                         if (pomo_state == PomodoroManager::PAUSED) {
-                            snprintf(pomo_status_buf, sizeof(pomo_status_buf), "已暂停，说“继续番茄钟”可恢复");
+                            snprintf(pomo_status_buf, sizeof(pomo_status_buf), "已暂停，说\"继续番茄钟\"可恢复");
+                        } else if (pomo_state == PomodoroManager::BREAKING) {
+                            snprintf(pomo_status_buf, sizeof(pomo_status_buf), "休息时间，放松一下~");
                         } else {
-                            snprintf(pomo_status_buf, sizeof(pomo_status_buf), "白噪音播放中，专注进行中");
+                            snprintf(pomo_status_buf, sizeof(pomo_status_buf), "专注进行中");
                         }
                         lv_label_set_long_mode(self->pomo_chat_status_label_, LV_LABEL_LONG_WRAP);
                         lv_label_set_text(self->pomo_chat_status_label_, pomo_status_buf);
                     }
                 }
+            } else if (self->pomo_countdown_label_ && self->IsPomodoroMode()) {
+                // IDLE 状态：显示配置的时间，方便用户看到当前设定
+                // 每秒都检查，确保 stop() 后立即刷新，以及网页修改后立即同步
+                Settings pomo_s("pomodoro", false);
+                int focus = pomo_s.GetInt("focus", 25);
+                int brk = pomo_s.GetInt("break", 5);
+                char idle_info[64];
+                snprintf(idle_info, sizeof(idle_info), "专注%d分钟 / 休息%d分钟", focus, brk);
+                char idle_time[8];
+                snprintf(idle_time, sizeof(idle_time), "%02d:00", focus);
+                self->UpdatePomodoroDisplay("待命", idle_time, 0, idle_info);
             }
         }
 

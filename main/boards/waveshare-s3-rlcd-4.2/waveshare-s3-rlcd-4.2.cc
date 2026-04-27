@@ -204,9 +204,26 @@ private:
         });
 
         user_button_.OnDoubleClick([this]() {
-            if (display_) display_->NotifyUserActivity();  // 记录用户活动
-            // 双击：刷新所有数据（天气、传感器、时间）
-            RefreshAllData();
+            if (display_) display_->NotifyUserActivity();
+            if (display_ && display_->IsPomodoroMode()) {
+                // 番茄钟页面双击：切换专注/休息模式
+                auto& pomo = PomodoroManager::getInstance();
+                Settings pomo_settings("pomodoro", false);
+                int focus_min = pomo_settings.GetInt("focus", 25);
+                int break_min = pomo_settings.GetInt("break", 5);
+                auto state = pomo.getState();
+                if (state == PomodoroManager::IDLE || state == PomodoroManager::COUNTING) {
+                    // IDLE或专注中 → 切到休息模式
+                    pomo.startBreak(break_min);
+                    ESP_LOGI("UserButton", "双击切换到休息模式: %d分钟", break_min);
+                } else {
+                    // 休息中/暂停 → 切到专注模式
+                    pomo.start(focus_min, false, break_min);
+                    ESP_LOGI("UserButton", "双击切换到专注模式: %d分钟", focus_min);
+                }
+            } else {
+                RefreshAllData();
+            }
         });
 
         // BOOT 按钮长按：循环切换音量档位 0→34→67→100→0，并播放0.5秒蜂鸣提示
@@ -260,8 +277,22 @@ private:
 
         user_button_.OnLongPress([this]() {
             if (display_) display_->NotifyUserActivity();  // 记录用户活动
-            // 长按：显示系统信息
-            ShowSystemInfo();
+            // 番茄钟页面：长按启动/重置番茄钟；其他页面：显示系统信息
+            if (display_ && display_->IsPomodoroMode()) {
+                auto& pomo = PomodoroManager::getInstance();
+                if (pomo.getState() == PomodoroManager::IDLE) {
+                    Settings pomo_settings("pomodoro", false);
+                    int focus_min = pomo_settings.GetInt("focus", 25);
+                    int break_min = pomo_settings.GetInt("break", 5);
+                    pomo.start(focus_min, false, break_min);
+                    ESP_LOGI("UserButton", "番茄钟启动: %d分钟专注, %d分钟休息", focus_min, break_min);
+                } else {
+                    pomo.stop();
+                    ESP_LOGI("UserButton", "番茄钟已重置");
+                }
+            } else {
+                ShowSystemInfo();
+            }
         });
     }
 
@@ -431,7 +462,7 @@ private:
      *   2) self.weather.update  - AI 回写天气数据到屏幕
      *   3) self.disp.network    - 重新进入配网模式
      *   4) self.disp.switch     - 切换显示页（toggle/music/weather/pomodoro）
-     *   5) self.pomodoro.start  - 启动番茄钟 + 白噪音
+         *   5) self.pomodoro.start  - 启动番茄钟
      *   6) self.pomodoro.stop   - 停止番茄钟
      *   7) self.pomodoro.status - 查询番茄钟状态
      *   8) self.pomodoro.pause  - 暂停/恢复番茄钟
@@ -632,43 +663,39 @@ private:
         // ===== 番茄钟工具组（5/12 ~ 8/12）=====
         /**
          * @工具 [5/12] self.pomodoro.start
-         * @用途 启动番茄钟倒计时，并可选播放 SD 卡中的白噪音
+         * @用途 启动番茄钟倒计时（专注+休息循环）
          * @参数
-         *   - minutes (int, 1-120)  倒计时分钟，默认 25（标准番茄钟）
-         *   - white_noise (bool)    是否播 SD 卡 /sdcard/white-noise/ 下的 mp3，默认 true
-         * @返回 "番茄钟已启动：N 分钟倒计时，白噪音已开启/已关闭" 或 "番茄钟启动失败"
+         *   - minutes (int, 1-120)  专注时长分钟，默认从NVS读取（标准番茄钟25分钟）
+         * @返回 "番茄钟已启动：专注N分钟 / 休息M分钟" 或 "番茄钟启动失败"
          * @触发示例 「开始番茄钟」「专注25分钟」「倒计时10分钟」
          * @核心调用
-         *   - PomodoroManager::start(minutes, noise)  启动 FreeRTOS 倒计时任务 + MP3 播放
+         *   - PomodoroManager::start(minutes, false, break_min)  启动 FreeRTOS 倒计时任务
          *   - display_->SwitchToPomodoroPage()        启动后自动切到番茄钟页
          * @捕获 [this]：访问 display_
-         * @异常处理 properties[].value<T>() 用 try/catch 包裹，参数缺失时回退默认值（25 分钟 / 开启白噪音）
+         * @异常处理 properties[].value<T>() 用 try/catch 包裹，参数缺失时回退NVS默认值
          * @参数夹紧 minutes < 1 → 1，> 120 → 120（防御 AI 误传超大值）
-         * @副作用 PomodoroManager 进入 RUNNING 状态 + Audio 播放线程启动 + 屏幕切页
+         * @副作用 PomodoroManager 进入 COUNTING 状态 + 屏幕切页
          */
         mcp_server.AddTool("self.pomodoro.start",
-            "Start a countdown timer with optional white noise from SD card.\n"
+            "Start a pomodoro focus timer.\n"
             "Use when user says: '开始番茄钟', '专注25分钟', '倒计时10分钟', 'start pomodoro', '番茄工作法'\n"
             "Args:\n"
-            "  `minutes`: Countdown duration in minutes (default 25, range 1-120)\n"
-            "  `white_noise`: Whether to play white noise from SD card (default true)",
+            "  `minutes`: Focus duration in minutes (default from device settings, range 1-300)",
             PropertyList({
-                Property("minutes", kPropertyTypeInteger, 1, 120),
-                Property("white_noise", kPropertyTypeBoolean)
+                Property("minutes", kPropertyTypeInteger, 1, 300)
             }),
             [this](const PropertyList& properties) -> ReturnValue {
-                int minutes = 25;
-                bool noise = true;
+                Settings pomo_settings("pomodoro", false);
+                int minutes = pomo_settings.GetInt("focus", 25);
+                int break_min = pomo_settings.GetInt("break", 5);
                 
-                // 安全获取参数（带默认值）
-                try { minutes = properties["minutes"].value<int>(); } catch (...) { minutes = 25; }
-                try { noise = properties["white_noise"].value<bool>(); } catch (...) { noise = true; }
+                try { minutes = properties["minutes"].value<int>(); } catch (...) {}
 
                 if (minutes < 1) minutes = 1;
-                if (minutes > 120) minutes = 120;
+                if (minutes > 300) minutes = 300;
 
                 auto& pomo = PomodoroManager::getInstance();
-                bool ok = pomo.start(minutes, noise);
+                bool ok = pomo.start(minutes, false, break_min);
                 
                 // 自动切换到番茄钟页面
                 if (ok && display_) {
@@ -679,8 +706,8 @@ private:
                 if (ok) {
                     char buf[128];
                     snprintf(buf, sizeof(buf), 
-                             "番茄钟已启动：%d 分钟倒计时，白噪音%s",
-                             minutes, noise ? "已开启" : "已关闭");
+                             "番茄钟已启动：专注%d分钟 / 休息%d分钟",
+                             minutes, break_min);
                     return std::string(buf);
                 }
                 return std::string("番茄钟启动失败");
@@ -688,18 +715,18 @@ private:
 
         /**
          * @工具 [6/12] self.pomodoro.stop
-         * @用途 停止当前番茄钟（无论 RUNNING 还是 PAUSED）并停白噪音
+         * @用途 停止当前番茄钟（无论 COUNTING / BREAKING / PAUSED）
          * @参数 无
          * @返回 "番茄钟已停止" 或 "番茄钟当前没有在运行"
          * @触发示例 「停止番茄钟」「结束专注」「不专注了」
          * @核心调用
-         *   - PomodoroManager::stop()      置位 IDLE，发停止信号给倒计时任务，关音频
+         *   - PomodoroManager::stop()      置位 IDLE，发停止信号给倒计时任务
          *   - display_->SwitchToWeatherPage()  自动切回天气页（默认页）
          * @捕获 [this]：访问 display_
          * @副作用 PomodoroManager → IDLE + 屏幕切回天气
          */
         mcp_server.AddTool("self.pomodoro.stop",
-            "Stop the current Pomodoro timer and white noise.\n"
+            "Stop the current Pomodoro timer.\n"
             "Use when user says: '停止番茄钟', '结束专注', 'stop pomodoro', '不专注了'",
             PropertyList(),
             [this](const PropertyList&) -> ReturnValue {
@@ -754,7 +781,7 @@ private:
          * @触发示例 「暂停番茄钟」「继续番茄钟」
          * @核心调用 PomodoroManager::togglePause()  根据当前状态翻转
          * @捕获 无（不需要 display_，不切页）
-         * @副作用 倒计时定时器暂停/恢复 + 白噪音音频暂停/恢复
+         * @副作用 倒计时定时器暂停/恢复
          */
         mcp_server.AddTool("self.pomodoro.pause",
             "Pause or resume the current Pomodoro timer.\n"

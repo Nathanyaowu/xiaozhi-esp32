@@ -14,14 +14,14 @@
 
 // ===== 公开接口 =====
 
-bool PomodoroManager::start(int minutes, bool white_noise) {
-    // 如果已经在运行，先停止
+bool PomodoroManager::start(int minutes, bool white_noise, int break_min) {
     if (state_.load() != IDLE) {
         stop();
-        vTaskDelay(pdMS_TO_TICKS(500));  // 等待旧任务清理
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 
     minutes_ = minutes;
+    break_minutes_ = break_min;
     play_white_noise_ = white_noise;
 
     int total_secs = minutes * 60;
@@ -45,7 +45,30 @@ bool PomodoroManager::start(int minutes, bool white_noise) {
         }
     }
 
-    ESP_LOGI(TAG, "番茄钟已启动: %d 分钟倒计时, 白噪音=%s", minutes, white_noise ? "开" : "关");
+    ESP_LOGI(TAG, "番茄钟已启动: %d 分钟倒计时", minutes);
+    return true;
+}
+
+bool PomodoroManager::startBreak(int minutes) {
+    if (state_.load() != IDLE) {
+        stop();
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    minutes_ = minutes;
+    break_minutes_ = minutes;
+    play_white_noise_ = false;
+
+    int total_secs = minutes * 60;
+    stop_requested_.store(false);
+    noise_stop_requested_.store(false);
+    remaining_seconds_.store(total_secs);
+    total_seconds_.store(total_secs);
+    state_.store(BREAKING);
+
+    xTaskCreatePinnedToCore(PomodoroTask, "pomodoro_task", 4 * 1024, this, 2, &pomodoro_task_handle_, 0);
+
+    ESP_LOGI(TAG, "休息模式已启动: %d 分钟", minutes);
     return true;
 }
 
@@ -72,21 +95,13 @@ void PomodoroManager::stop() {
 
 void PomodoroManager::togglePause() {
     State current = state_.load();
-    if (current == COUNTING) {
+    if (current == COUNTING || current == BREAKING) {
+        paused_from_ = current;
         state_.store(PAUSED);
         stopWhiteNoise();
         ESP_LOGI(TAG, "番茄钟已暂停");
     } else if (current == PAUSED) {
-        // 恢复倒计时，重新启动白噪音
-        state_.store(COUNTING);
-        if (play_white_noise_ && SdcardManager::getInstance().isMounted()) {
-            noise_stop_requested_.store(false);
-            auto files = scanWhiteNoiseFiles();
-            if (!files.empty() && noise_task_handle_ == nullptr) {
-                // 白噪音任务用较低优先级，避免影响 UI 与语音主流程
-                xTaskCreatePinnedToCore(WhiteNoiseTask, "white_noise", 8 * 1024, this, 1, &noise_task_handle_, 0);
-            }
-        }
+        state_.store(paused_from_);
         ESP_LOGI(TAG, "番茄钟已恢复");
     }
 }
@@ -94,8 +109,9 @@ void PomodoroManager::togglePause() {
 std::string PomodoroManager::getStateText() const {
     switch (state_.load()) {
         case IDLE:     return "空闲";
-        case COUNTING: return "倒计时中";
+        case COUNTING: return "专注中";
         case PAUSED:   return "已暂停";
+        case BREAKING: return "休息中";
         default:       return "未知";
     }
 }
@@ -159,20 +175,20 @@ void PomodoroManager::PomodoroTask(void* arg) {
             self->remaining_seconds_.store(remaining - 1);
         }
 
-        // 倒计时结束
         if (remaining <= 1) {
+            // 倒计时结束，回到 IDLE
             ESP_LOGI(TAG, "倒计时结束！");
-
-            // 停止白噪音
             self->stopWhiteNoise();
 
-            // 屏幕显示提醒
             auto display = Board::GetInstance().GetDisplay();
             if (display) {
-                display->SetChatMessage("system", "时间到！倒计时结束~");
+                if (current == COUNTING) {
+                    display->SetChatMessage("system", "专注结束！");
+                } else {
+                    display->SetChatMessage("system", "休息结束！");
+                }
             }
 
-            // 回到空闲
             self->state_.store(IDLE);
             self->remaining_seconds_.store(0);
             self->total_seconds_.store(0);
