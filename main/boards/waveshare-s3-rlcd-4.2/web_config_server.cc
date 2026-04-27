@@ -214,9 +214,9 @@ function addStock(){
   if(!name){showMsg('请输入股票名称',false);return;}
   if(name.length>32){showMsg('名称过长(最多32字符)',false);return;}
   // 校验代码格式：纯数字(A股/港股)或字母(美股)
-  const codeRegex=(market<=2)?/^\d{4,6}$/:/^[a-zA-Z]{1,5}$/;
+  const codeRegex=(market<=2)?/^\d{4,6}$/:/^[a-zA-Z][a-zA-Z0-9_.]{0,9}$/;
   if(!codeRegex.test(code)){showMsg('代码格式错误',false);return;}
-  const fullCode=MKT_PREFIX[market]+code;
+  const fullCode=MKT_PREFIX[market]+code.toLowerCase();
   // 去重
   if(stocks.some(s=>s.code===fullCode)){showMsg('已存在该股票',false);return;}
   stocks.push({code:fullCode,name:name,market:market});
@@ -340,10 +340,10 @@ static bool ValidateStockCode(const char *code) {
     }
     if (strncmp(code, "gb_", 3) == 0) {
         size_t sym_len = len - 3;
-        if (sym_len < 1 || sym_len > 5) return false;
+        if (sym_len < 1 || sym_len > 10) return false;
         for (size_t i = 3; i < len; i++) {
             char c = code[i];
-            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) return false;
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.')) return false;
         }
         return true;
     }

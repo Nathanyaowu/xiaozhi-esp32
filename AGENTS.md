@@ -63,7 +63,9 @@ feat/rlcd-enhancements （所有定制功能在此分支）
 - 独立 FreeRTOS task（`StockFetchTask`），与 UI 更新解耦
 - 新浪财经 API，A 股/港股名称返回 GBK 编码（项目使用用户配置的 UTF-8 名称，不做转码）
 - 科创板 688 开头属于上交所，前缀用 `sh` 不是 `sz`
-- `FetchStockData` 无论返回值都必须更新缓存（否则旧数据残留）
+- `FetchStockData` 是一次 HTTP 请求批量获取所有股票（URL 拼接逗号分隔），要么全部返回要么全部失败，不存在"部分超时"
+- HTTP 超时时 `FetchStockData` 返回 0，此时保留上次缓存数据不覆盖（避免显示"停牌"）
+- 仅当 `FetchStockData` 返回 > 0（至少有1支有效数据）时才更新缓存
 - `GetStockConfigs` 空数组时返回 0（不回退默认股票）
 
 ### 全局指针桥接

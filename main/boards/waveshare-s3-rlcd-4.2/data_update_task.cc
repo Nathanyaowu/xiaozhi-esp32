@@ -713,14 +713,26 @@ void CustomLcdDisplay::StockFetchTask(void *arg) {
             StockConfig configs[MAX_STOCKS];
             int stock_count = GetStockConfigs(configs);
             StockData results[MAX_STOCKS] = {};
+            int fetched = 0;
             if (stock_count > 0) {
-                FetchStockData(configs, results, stock_count);
+                fetched = FetchStockData(configs, results, stock_count);
             }
-            memcpy(self->stock_data_cache_, results, sizeof(results));
-            memcpy(self->stock_configs_cache_, configs, stock_count * sizeof(StockConfig));
-            self->stock_count_cache_ = stock_count;
-            self->stock_data_valid_ = true;
-            self->stock_data_dirty_ = true;
+            // 仅在成功获取到数据时更新缓存，HTTP 超时时保留上次有效数据
+            if (fetched > 0 || stock_count == 0) {
+                memcpy(self->stock_data_cache_, results, sizeof(results));
+                memcpy(self->stock_configs_cache_, configs, stock_count * sizeof(StockConfig));
+                self->stock_count_cache_ = stock_count;
+                self->stock_data_valid_ = true;
+                self->stock_data_dirty_ = true;
+            } else if (stock_count > 0 && self->stock_data_valid_) {
+                // HTTP 失败但有旧缓存，仅标记需要刷新（保持旧数据显示）
+                ESP_LOGW("StockFetch", "网络请求失败，保留上次缓存数据");
+            } else {
+                // 首次获取就失败，无旧缓存，标记数据有效以触发 UI 显示"网络错误"
+                self->stock_count_cache_ = stock_count;
+                self->stock_data_valid_ = true;
+                self->stock_data_dirty_ = true;
+            }
         }
 
         Settings interval_settings("stock", false);
