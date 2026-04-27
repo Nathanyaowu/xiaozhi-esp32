@@ -237,12 +237,12 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                 const char *weeks_en[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
                 if (self->day_label_) lv_label_set_text(self->day_label_, weeks_en[timeinfo.tm_wday]);
 
-                char date_buf[8];
-                snprintf(date_buf, sizeof(date_buf), "%d", timeinfo.tm_mday);
+                char date_buf[16];
+                strftime(date_buf, sizeof(date_buf), "%Y/%m/%d", &timeinfo);
                 if (self->date_num_label_) lv_label_set_text(self->date_num_label_, date_buf);
 
                 self->last_min_ = timeinfo.tm_min;
-                ESP_LOGI(TAG, "时间已更新: %s, %s, %d日", time_buf, weeks_en[timeinfo.tm_wday], timeinfo.tm_mday);
+                ESP_LOGI(TAG, "时间已更新: %s, %s, %s", time_buf, weeks_en[timeinfo.tm_wday], date_buf);
             }
         }  // DisplayLockGuard 自动释放
 
@@ -277,7 +277,7 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                                 && mt->valuestring[2] == ':') {
                                 // 有日期字段时，检查是否是今天
                                 if (md && cJSON_IsString(md) && strlen(md->valuestring) == 10) {
-                                    char date_buf[16];
+                char date_buf[32];
                                     strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", &timeinfo);
                                     if (strcmp(md->valuestring, date_buf) != 0) {
                                         continue;  // 不是今天，跳过

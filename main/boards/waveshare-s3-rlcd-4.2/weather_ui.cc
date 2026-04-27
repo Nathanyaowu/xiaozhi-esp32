@@ -183,11 +183,11 @@ void CustomLcdDisplay::SetupWeatherUI() {
     lv_obj_remove_flag(date_area, LV_OBJ_FLAG_SCROLLABLE);
 
     date_num_label_ = lv_label_create(date_area);
-    lv_obj_set_style_text_font(date_num_label_, font_large, 0);
+    lv_obj_set_style_text_font(date_num_label_, font_small, 0);
     lv_obj_set_style_text_color(date_num_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(date_num_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(date_num_label_);
-    lv_label_set_text(date_num_label_, "--");
+    lv_label_set_text(date_num_label_, "----/--/--");
 
     // 天气标签
     weather_label_ = lv_label_create(calendar_card);
