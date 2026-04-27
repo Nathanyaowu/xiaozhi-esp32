@@ -12,6 +12,7 @@
 #include <cmath>
 #include <esp_log.h>
 #include <esp_http_client.h>
+#include "secret_config.h"
 
 static const char *TAG = "StockData";
 
@@ -118,7 +119,7 @@ int FetchStockData(const StockConfig* configs, StockData* results, int count) {
     }
 
     // 拼接请求 URL: http://hq.sinajs.cn/list=sh600519,sz000001,...
-    char url[256] = "http://hq.sinajs.cn/list=";
+    char url[256] = STOCK_API_BASE_URL;
     for (int i = 0; i < count; i++) {
         if (i > 0) strcat(url, ",");
         strcat(url, configs[i].code);
@@ -140,7 +141,7 @@ int FetchStockData(const StockConfig* configs, StockData* results, int count) {
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     // Sina API 需要 Referer 头，否则可能返回空数据
-    esp_http_client_set_header(client, "Referer", "http://finance.sina.com.cn/");
+    esp_http_client_set_header(client, "Referer", STOCK_API_REFERER);
 
     esp_err_t err = esp_http_client_perform(client);
     int success_count = 0;

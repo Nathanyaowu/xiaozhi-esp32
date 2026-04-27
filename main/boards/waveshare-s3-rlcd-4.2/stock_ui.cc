@@ -74,27 +74,28 @@ void CustomLcdDisplay::SetupStockUI() {
     lv_obj_set_style_text_color(stock_battery_pct_label_, lv_color_black(), 0);
     lv_label_set_text(stock_battery_pct_label_, "---%");
 
-    // 左上角温湿度
-    stock_sensor_label_ = lv_label_create(screen);
-    lv_obj_set_style_text_font(stock_sensor_label_, font_small, 0);
-    lv_obj_set_style_text_color(stock_sensor_label_, lv_color_white(), 0);
-    lv_obj_align(stock_sensor_label_, LV_ALIGN_TOP_LEFT, 10, 8);
-    lv_label_set_text(stock_sensor_label_, "--.-°C  --.-%");
+    // 左上角时钟（与 music_ui 一致）
+    stock_time_label_ = lv_label_create(screen);
+    lv_obj_set_style_text_font(stock_time_label_, font_title, 0);
+    lv_obj_set_style_text_color(stock_time_label_, lv_color_white(), 0);
+    lv_obj_align(stock_time_label_, LV_ALIGN_TOP_LEFT, 10, 5);
+    lv_label_set_text(stock_time_label_, "00:00");
 
-    // ===== 标题 "证券行情" =====
+    // 温湿度（时钟右侧，小字低透明度）
+    stock_sensor_label_ = lv_label_create(screen);
+    lv_obj_set_style_text_font(stock_sensor_label_, font_tiny, 0);
+    lv_obj_set_style_text_color(stock_sensor_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(stock_sensor_label_, LV_OPA_60, 0);
+    lv_obj_align(stock_sensor_label_, LV_ALIGN_TOP_LEFT, 80, 11);
+    lv_label_set_text(stock_sensor_label_, "--.-°C --.-%");
+
+    // ===== 标题 "Stock" =====
     const int title_y = 38;
     lv_obj_t *title_label = lv_label_create(screen);
     lv_obj_set_style_text_font(title_label, font_title, 0);
     lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
     lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 10, title_y);
     lv_label_set_text(title_label, "Stock");
-
-    // 时钟（标题右侧）
-    stock_time_label_ = lv_label_create(screen);
-    lv_obj_set_style_text_font(stock_time_label_, font_small, 0);
-    lv_obj_set_style_text_color(stock_time_label_, lv_color_white(), 0);
-    lv_obj_align(stock_time_label_, LV_ALIGN_TOP_RIGHT, -130, title_y + 4);
-    lv_label_set_text(stock_time_label_, "00:00");
 
     // ===== 表头分隔线 =====
     const int header_y = 66;
