@@ -290,7 +290,18 @@ private:
                     ESP_LOGI("UserButton", "番茄钟已重置");
                 }
             } else {
-                ShowSystemInfo();
+                if (display_->IsShowingSystemInfo()) {
+                    display_->SetShowingSystemInfo(false);
+                    lv_obj_t* chat_label = display_->GetChatStatusLabel();
+                    if (chat_label) {
+                        DisplayLockGuard lock(display_);
+                        lv_anim_delete(chat_label, nullptr);
+                        lv_label_set_text(chat_label, "");
+                    }
+                    ESP_LOGI("UserButton", "系统信息已关闭");
+                } else {
+                    ShowSystemInfo();
+                }
             }
         });
     }
