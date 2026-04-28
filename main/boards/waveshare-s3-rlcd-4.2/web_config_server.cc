@@ -13,12 +13,14 @@
 #include <cJSON.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <esp_http_client.h>
 
 #include "settings.h"
 #include "stock_data.h"
 #include "custom_lcd_display.h"
 #include "board.h"
 #include "audio_codec.h"
+#include "application.h"
 #include "managers/weather_manager.h"
 
 static const char *TAG = "WebConfig";
@@ -127,6 +129,17 @@ th{color:#666;font-weight:500}
 <button class="btn btn-add" onclick="savePomodoro()">保存</button>
 </div>
 <p style="font-size:12px;color:#888;margin-top:8px">长按USER键启动番茄钟（番茄钟页面时）</p>
+</div>
+<h2 style="margin-top:20px">🎵 音乐播放</h2>
+<div id="msg-music" class="msg"></div>
+<div class="card">
+<h3 style="margin-bottom:8px;font-size:14px;color:#666">搜索音乐</h3>
+<div class="add-form" style="align-items:center">
+<input id="music-kw" placeholder="歌名/歌手" style="width:160px;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:14px">
+<button class="btn btn-add" onclick="searchMusic()">搜索</button>
+</div>
+<div id="music-results" style="margin-top:12px"></div>
+<p style="font-size:12px;color:#888;margin-top:8px">搜索后点击歌曲即可播放；URL失效可重新搜索</p>
 </div>
 <h2 style="margin-top:20px">📝 备忘录</h2>
 <div id="msg-memo" class="msg"></div>
@@ -326,6 +339,30 @@ fetch('/api/pomodoro').then(r=>r.json()).then(d=>{
   document.getElementById('pomo-focus').value=d.focus||25;
   document.getElementById('pomo-break').value=d.break_min||5;
 }).catch(()=>{});
+
+function searchMusic(){
+  const kw=document.getElementById('music-kw').value.trim();
+  if(!kw){showMsg('请输入关键词',false,'msg-music');return;}
+  const rd=document.getElementById('music-results');
+  rd.innerHTML='<p style="color:#888;font-size:13px">搜索中...</p>';
+  fetch('/api/music/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keyword:kw})})
+  .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'搜索失败')});return r.json()})
+  .then(d=>{
+    if(!d.list||d.list.length===0){rd.innerHTML='<p style="color:#888;font-size:13px">无结果</p>';return;}
+    rd.innerHTML='<table style="width:100%;font-size:13px"><thead><tr><th>歌名</th><th>歌手</th><th></th></tr></thead><tbody>'+
+      d.list.map((s,i)=>`<tr><td>${s.name}</td><td>${s.artist}</td><td><button class="btn btn-add" style="padding:4px 10px;font-size:12px" onclick="playMusic(${s.rid},'${s.name.replace(/'/g,"\\'")}','${s.artist.replace(/'/g,"\\'")}')">播放</button></td></tr>`).join('')+
+      '</tbody></table>';
+  })
+  .catch(e=>{rd.innerHTML='';showMsg(e.message,false,'msg-music')});
+}
+
+function playMusic(rid,name,artist){
+  showMsg('正在获取播放链接...',true,'msg-music');
+  fetch('/api/music/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rid:rid,name:name,artist:artist})})
+  .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'播放失败')});return r.json()})
+  .then(()=>showMsg('开始播放: '+name,true,'msg-music'))
+  .catch(e=>showMsg(e.message,false,'msg-music'));
+}
 </script>
 </body>
 </html>
@@ -935,6 +972,273 @@ static esp_err_t HandlePostPomodoro(httpd_req_t *req) {
 }
 
 // ============================================================
+// 音乐搜索与播放（酷我音乐 API）
+// ============================================================
+
+// 酷我 API 响应缓冲区（每条搜索结果约 2.2KB，5条约 11KB）
+#define KUWO_RESP_BUF_SIZE 24576
+
+// esp_http_client 事件回调：将响应体追加到用户缓冲区
+static esp_err_t kuwo_http_event_handler(esp_http_client_event_t *evt) {
+    if (evt->event_id == HTTP_EVENT_ON_DATA) {
+        // user_data 指向 { char* buf, size_t buf_size, size_t cur_len }
+        // 为简化，这里用与 stock_data.cc 类似的模式
+        char *buf = (char *)evt->user_data;
+        size_t cur_len = strlen(buf);
+        size_t remaining = KUWO_RESP_BUF_SIZE - cur_len - 1;
+        if ((size_t)evt->data_len <= remaining) {
+            memcpy(buf + cur_len, evt->data, evt->data_len);
+            buf[cur_len + evt->data_len] = '\0';
+        }
+    }
+    return ESP_OK;
+}
+
+// 调用酷我搜索 API（旧版 search.kuwo.cn 端点，无需 token 认证）
+// 返回 cJSON 数组（调用者负责 cJSON_Delete），nullptr 表示失败
+static cJSON* KuwoSearchMusic(const char* keyword, int limit) {
+    // URL 编码关键词（简易：中文 UTF-8 百分号编码）
+    char encoded_kw[256] = {0};
+    const unsigned char *p = (const unsigned char*)keyword;
+    char *out = encoded_kw;
+    while (*p && (out - encoded_kw) < 240) {
+        if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') ||
+            *p == '-' || *p == '_' || *p == '.' || *p == '~') {
+            *out++ = *p++;
+        } else {
+            snprintf(out, 4, "%%%02X", *p);
+            out += 3;
+            p++;
+        }
+    }
+    *out = '\0';
+
+    char url[512];
+    snprintf(url, sizeof(url),
+        "http://search.kuwo.cn/r.s?all=%s&ft=music&rn=%d&pn=0&encoding=utf8&rformat=json&mobi=1",
+        encoded_kw, limit);
+
+    char *resp_buf = (char *)malloc(KUWO_RESP_BUF_SIZE);
+    if (!resp_buf) return nullptr;
+    resp_buf[0] = '\0';
+
+    esp_http_client_config_t config = {};
+    config.url = url;
+    config.event_handler = kuwo_http_event_handler;
+    config.user_data = resp_buf;
+    config.timeout_ms = 8000;
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    esp_err_t err = esp_http_client_perform(client);
+    cJSON *result = nullptr;
+
+    if (err == ESP_OK && esp_http_client_get_status_code(client) == 200 && strlen(resp_buf) > 10) {
+        size_t resp_len = strlen(resp_buf);
+        if (resp_len >= KUWO_RESP_BUF_SIZE - 2) {
+            ESP_LOGW(TAG, "酷我搜索响应可能被截断: %zu bytes (buf=%d)", resp_len, KUWO_RESP_BUF_SIZE);
+        }
+        cJSON *root = cJSON_Parse(resp_buf);
+        if (root) {
+            cJSON *abslist = cJSON_GetObjectItem(root, "abslist");
+            if (abslist && cJSON_IsArray(abslist)) {
+                // 提取需要的字段，构建精简数组（保持前端 rid/name/artist 接口不变）
+                result = cJSON_CreateArray();
+                int count = cJSON_GetArraySize(abslist);
+                for (int i = 0; i < count && i < limit; i++) {
+                    cJSON *item = cJSON_GetArrayItem(abslist, i);
+                    cJSON *musicrid = cJSON_GetObjectItem(item, "MUSICRID");
+                    cJSON *name = cJSON_GetObjectItem(item, "SONGNAME");
+                    cJSON *artist = cJSON_GetObjectItem(item, "ARTIST");
+                    if (musicrid && cJSON_IsString(musicrid) && name && artist) {
+                        // MUSICRID 格式为 "MUSIC_123456"，提取数字部分
+                        const char *rid_str = musicrid->valuestring;
+                        if (strncmp(rid_str, "MUSIC_", 6) == 0) {
+                            rid_str += 6;
+                        }
+                        int rid = atoi(rid_str);
+                        if (rid > 0) {
+                            cJSON *entry = cJSON_CreateObject();
+                            cJSON_AddNumberToObject(entry, "rid", rid);
+                            cJSON_AddStringToObject(entry, "name", name->valuestring);
+                            cJSON_AddStringToObject(entry, "artist", artist->valuestring);
+                            cJSON_AddItemToArray(result, entry);
+                        }
+                    }
+                }
+            }
+            cJSON_Delete(root);
+        }
+    } else {
+        ESP_LOGW(TAG, "酷我搜索请求失败: err=%d, status=%d", err,
+                 err == ESP_OK ? esp_http_client_get_status_code(client) : -1);
+    }
+
+    esp_http_client_cleanup(client);
+    free(resp_buf);
+    return result;
+}
+
+// 获取酷我音乐播放 URL（通过 rid，使用 antiserver 端点，无需认证）
+// convert_url 返回 HTTP 链接（避免 ESP32 TLS 握手失败），响应为纯文本 URL
+static std::string KuwoGetPlayUrl(int rid) {
+    char url[256];
+    snprintf(url, sizeof(url),
+        "http://antiserver.kuwo.cn/anti.s?type=convert_url&rid=%d&format=mp3", rid);
+
+    char *resp_buf = (char *)malloc(4096);
+    if (!resp_buf) return "";
+    resp_buf[0] = '\0';
+
+    esp_http_client_config_t config = {};
+    config.url = url;
+    config.event_handler = kuwo_http_event_handler;
+    config.user_data = resp_buf;
+    config.timeout_ms = 8000;
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    esp_err_t err = esp_http_client_perform(client);
+    std::string play_url;
+
+    if (err == ESP_OK && esp_http_client_get_status_code(client) == 200 && strlen(resp_buf) > 10) {
+        // convert_url 端点直接返回纯文本 URL（非 JSON）
+        // 去除首尾空白
+        char *start = resp_buf;
+        while (*start == ' ' || *start == '\n' || *start == '\r') start++;
+        char *end = start + strlen(start) - 1;
+        while (end > start && (*end == ' ' || *end == '\n' || *end == '\r')) *end-- = '\0';
+        if (strncmp(start, "http", 4) == 0) {
+            play_url = start;
+        }
+    } else {
+        ESP_LOGW(TAG, "酷我播放URL请求失败: err=%d, rid=%d", err, rid);
+    }
+
+    esp_http_client_cleanup(client);
+    free(resp_buf);
+    return play_url;
+}
+
+// POST /api/music/search — 搜索音乐
+static esp_err_t HandlePostMusicSearch(httpd_req_t *req) {
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"empty body\"}");
+        return ESP_OK;
+    }
+    buf[received] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"invalid JSON\"}");
+        return ESP_OK;
+    }
+
+    cJSON *kw = cJSON_GetObjectItem(root, "keyword");
+    if (!kw || !cJSON_IsString(kw) || strlen(kw->valuestring) == 0 || strlen(kw->valuestring) > 64) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"keyword required (max 64 chars)\"}");
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "音乐搜索: %s", kw->valuestring);
+    cJSON *results = KuwoSearchMusic(kw->valuestring, 5);
+    cJSON_Delete(root);
+
+    if (!results) {
+        httpd_resp_set_status(req, "502 Bad Gateway");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"search failed\"}");
+        return ESP_OK;
+    }
+
+    // 构建响应 {"list": [...]}
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddItemToObject(resp, "list", results);
+    char *json_str = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+
+    httpd_resp_set_type(req, "application/json");
+    if (json_str) {
+        httpd_resp_sendstr(req, json_str);
+        cJSON_free(json_str);
+    } else {
+        httpd_resp_sendstr(req, "{\"list\":[]}");
+    }
+    return ESP_OK;
+}
+
+// POST /api/music/play — 获取播放 URL 并播放
+static esp_err_t HandlePostMusicPlay(httpd_req_t *req) {
+    char buf[256];
+    int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
+    if (received <= 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"empty body\"}");
+        return ESP_OK;
+    }
+    buf[received] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"invalid JSON\"}");
+        return ESP_OK;
+    }
+
+    cJSON *rid_val = cJSON_GetObjectItem(root, "rid");
+    cJSON *name_val = cJSON_GetObjectItem(root, "name");
+    cJSON *artist_val = cJSON_GetObjectItem(root, "artist");
+
+    if (!rid_val || !cJSON_IsNumber(rid_val)) {
+        cJSON_Delete(root);
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"rid required\"}");
+        return ESP_OK;
+    }
+
+    int rid = (int)rid_val->valuedouble;
+    std::string name = (name_val && cJSON_IsString(name_val)) ? name_val->valuestring : "";
+    std::string artist = (artist_val && cJSON_IsString(artist_val)) ? artist_val->valuestring : "";
+    cJSON_Delete(root);
+
+    ESP_LOGI(TAG, "获取播放URL: rid=%d, name=%s, artist=%s", rid, name.c_str(), artist.c_str());
+
+    std::string play_url = KuwoGetPlayUrl(rid);
+    if (play_url.empty()) {
+        httpd_resp_set_status(req, "502 Bad Gateway");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_sendstr(req, "{\"error\":\"failed to get play URL\"}");
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "开始播放: %s - %s, URL: %s", name.c_str(), artist.c_str(), play_url.c_str());
+
+    // 调用 Application 播放音乐
+    bool ok = Application::GetInstance().PlayMusicFromUrl(play_url, name, artist, "", "");
+
+    httpd_resp_set_type(req, "application/json");
+    if (ok) {
+        httpd_resp_sendstr(req, "{\"ok\":true}");
+    } else {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"error\":\"playback failed\"}");
+    }
+    return ESP_OK;
+}
+
+// ============================================================
 // Server 启动/停止
 // ============================================================
 
@@ -942,7 +1246,7 @@ void WebConfigServer::Start() {
     if (started_) return;
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 14;
+    config.max_uri_handlers = 16;
     config.stack_size = 4096;
     config.lru_purge_enable = true;
 
@@ -1050,6 +1354,21 @@ void WebConfigServer::Start() {
     };
     httpd_register_uri_handler(server_, &uri_get_pomodoro);
     httpd_register_uri_handler(server_, &uri_post_pomodoro);
+
+    httpd_uri_t uri_post_music_search = {
+        .uri = "/api/music/search",
+        .method = HTTP_POST,
+        .handler = HandlePostMusicSearch,
+        .user_ctx = nullptr
+    };
+    httpd_uri_t uri_post_music_play = {
+        .uri = "/api/music/play",
+        .method = HTTP_POST,
+        .handler = HandlePostMusicPlay,
+        .user_ctx = nullptr
+    };
+    httpd_register_uri_handler(server_, &uri_post_music_search);
+    httpd_register_uri_handler(server_, &uri_post_music_play);
 
     started_ = true;
     ESP_LOGI(TAG, "Web 配置服务器已启动 (端口 80)");
