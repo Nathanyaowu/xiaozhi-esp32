@@ -318,6 +318,25 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
 
                                     cJSON_DeleteItemFromArray(memo_arr, mi);
                                     memo_changed = true;
+                                } else if (strcmp(mt->valuestring, time_buf) < 0) {
+                                    bool is_today = true;
+                                    if (md && cJSON_IsString(md) && strlen(md->valuestring) == 10) {
+                                        char date_buf2[16];
+                                        strftime(date_buf2, sizeof(date_buf2), "%Y-%m-%d", &timeinfo);
+                                        is_today = (strcmp(md->valuestring, date_buf2) == 0);
+                                    }
+                                    if (is_today) {
+                                        ESP_LOGI(TAG, "🗑 清理过期备忘: %s %s",
+                                                 mt->valuestring,
+                                                 (mc && mc->valuestring) ? mc->valuestring : "");
+                                        char expired_buf[128];
+                                        snprintf(expired_buf, sizeof(expired_buf), "已清理过期备忘: %s %s",
+                                                 mt->valuestring,
+                                                 (mc && mc->valuestring) ? mc->valuestring : "");
+                                        self->SetChatMessage("system", expired_buf);
+                                        cJSON_DeleteItemFromArray(memo_arr, mi);
+                                        memo_changed = true;
+                                    }
                                 }
                             }
                         }
