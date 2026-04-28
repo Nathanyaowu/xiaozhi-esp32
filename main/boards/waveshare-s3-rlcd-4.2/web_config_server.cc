@@ -140,12 +140,15 @@ th{color:#666;font-weight:500}
 <div class="card">
 <h3 style="margin-bottom:8px;font-size:14px;color:#666">添加备忘</h3>
 <div class="add-form">
+<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:nowrap">
 <label>日期<input id="memodate" type="date" style="width:140px"></label>
-<label>时间<input id="memotime" placeholder="如 15:00 (可选)" style="width:120px"></label>
-<label>内容<input id="memocontent" placeholder="备忘内容" style="width:160px"></label>
+<label>时间<div style="display:flex;align-items:center;gap:2px;margin-top:4px"><select id="memohour" style="width:60px"><option value="">时</option></select><span>:</span><select id="memomin" style="width:60px"><option value="">分</option></select></div></label>
+</div>
+<div style="display:flex;gap:8px;align-items:flex-end;margin-top:8px">
+<label>内容<input id="memocontent" placeholder="备忘内容" style="width:260px"></label>
 <button class="btn btn-add" onclick="addMemo()">添加</button>
 </div>
-<p style="font-size:12px;color:#888;margin-top:8px">日期不填=当天触发；时间不填=仅显示不提醒</p>
+<p style="font-size:12px;color:#888;margin-top:8px">日期不填=当天触发；时间不选=仅显示不提醒</p>
 </div>
 <h2 style="margin-top:20px">📈 股票自选配置</h2>
 <div id="msg-stock" class="msg"></div>
@@ -267,18 +270,27 @@ function delMemo(i){
   memos.splice(i,1);
   saveMemo();
 }
+function initTimeSelects(){
+  const hs=document.getElementById('memohour'),ms=document.getElementById('memomin');
+  for(let i=0;i<24;i++){const o=document.createElement('option');o.value=String(i).padStart(2,'0');o.text=String(i).padStart(2,'0');hs.appendChild(o);}
+  for(let i=0;i<60;i++){const o=document.createElement('option');o.value=String(i).padStart(2,'0');o.text=String(i).padStart(2,'0');ms.appendChild(o);}
+}
+initTimeSelects();
 function addMemo(){
   if(memos.length>=10){showMsg('最多10条备忘',false,'msg-memo');return;}
   const d=document.getElementById('memodate').value;
-  const t=document.getElementById('memotime').value.trim();
+  const hv=document.getElementById('memohour').value;
+  const mv=document.getElementById('memomin').value;
+  let t='';
+  if(hv&&mv){t=hv+':'+mv;}
+  else if(hv||mv){showMsg('请同时选择小时和分钟',false,'msg-memo');return;}
   const c=document.getElementById('memocontent').value.trim();
   if(!c){showMsg('请输入备忘内容',false,'msg-memo');return;}
   if(c.length>48){showMsg('内容过长(最多48字符)',false,'msg-memo');return;}
-  if(t&&!/^\d{2}:\d{2}$/.test(t)){showMsg('时间格式应为 HH:MM',false,'msg-memo');return;}
-  if(t){const[h,m]=[parseInt(t),parseInt(t.slice(3))];if(h>23||m>59){showMsg('时间无效(00:00~23:59)',false,'msg-memo');return;}}
   memos.push({t:t,c:c,d:d});
   document.getElementById('memodate').value='';
-  document.getElementById('memotime').value='';
+  document.getElementById('memohour').value='';
+  document.getElementById('memomin').value='';
   document.getElementById('memocontent').value='';
   saveMemo();
 }

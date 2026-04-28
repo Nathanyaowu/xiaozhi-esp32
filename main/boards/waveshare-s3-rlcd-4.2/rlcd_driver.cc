@@ -50,9 +50,9 @@ RlcdDriver::RlcdDriver(spi_display_config_t spiconfig, int width, int height,
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&gpio_conf));
     Set_ResetIOLevel(1);
 
-    // 分配 1-bit 显示缓冲区
+    // 分配 1-bit 显示缓冲区（内部 DMA 内存，避免 SPI 传输时需要 bounce buffer）
     DisplayLen = transfer >> 3;
-    DispBuffer = (uint8_t *)heap_caps_malloc(DisplayLen, MALLOC_CAP_SPIRAM);
+    DispBuffer = (uint8_t *)heap_caps_malloc(DisplayLen, MALLOC_CAP_DMA);
     assert(DispBuffer);
 
     // 分配像素映射 LUT（加速 RGB565 → 1-bit 转换）
@@ -125,7 +125,10 @@ void RlcdDriver::RLCD_SendData(uint8_t Data) {
 }
 
 void RlcdDriver::RLCD_Sendbuffera(uint8_t *Data, int len) {
-    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_color(io_handle_, -1, Data, len));
+    esp_err_t ret = esp_lcd_panel_io_tx_color(io_handle_, -1, Data, len);
+    if (ret != ESP_OK) {
+        ESP_LOGW("RLCD", "tx_color failed: 0x%x, skipping frame", ret);
+    }
 }
 
 void RlcdDriver::RLCD_Reset() {
