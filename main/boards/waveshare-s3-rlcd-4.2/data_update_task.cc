@@ -636,15 +636,20 @@ void CustomLcdDisplay::DataUpdateTask(void *arg) {
                     }
                 }
             } else if (self->pomo_countdown_label_ && self->IsPomodoroMode()) {
-                // IDLE 状态：显示配置的时间，方便用户看到当前设定
-                // 每秒都检查，确保 stop() 后立即刷新，以及网页修改后立即同步
+                // IDLE 状态：根据 break_mode_ 显示对应模式的时间
+                auto& pomo = PomodoroManager::getInstance();
                 Settings pomo_s("pomodoro", false);
                 int focus = pomo_s.GetInt("focus", 25);
                 int brk = pomo_s.GetInt("break", 5);
                 char idle_info[64];
-                snprintf(idle_info, sizeof(idle_info), "专注%d分钟 / 休息%d分钟", focus, brk);
                 char idle_time[8];
-                snprintf(idle_time, sizeof(idle_time), "%02d:00", focus);
+                if (pomo.isBreakMode()) {
+                    snprintf(idle_info, sizeof(idle_info), "休息%d分钟 双击切换/长按启动", brk);
+                    snprintf(idle_time, sizeof(idle_time), "%02d:00", brk);
+                } else {
+                    snprintf(idle_info, sizeof(idle_info), "专注%d分钟 双击切换/长按启动", focus);
+                    snprintf(idle_time, sizeof(idle_time), "%02d:00", focus);
+                }
                 self->UpdatePomodoroDisplay("待命", idle_time, 0, idle_info);
             }
         }

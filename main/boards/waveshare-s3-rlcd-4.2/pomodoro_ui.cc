@@ -20,6 +20,7 @@
 // └──────────────────────────────────────────┘
 
 #include "custom_lcd_display.h"
+#include "settings.h"
 #include <esp_log.h>
 #include <font_awesome.h>
 
@@ -133,11 +134,17 @@ void CustomLcdDisplay::SetupPomodoroUI() {
     // 第 3 层：大号倒计时数字（居中）
     // ============================================================
 
+    Settings pomo_s("pomodoro", false);
+    int init_focus = pomo_s.GetInt("focus", 25);
+    int init_break = pomo_s.GetInt("break", 5);
+
     pomo_countdown_label_ = lv_label_create(page);
     lv_obj_set_style_text_font(pomo_countdown_label_, font_big, 0);
     lv_obj_set_style_text_color(pomo_countdown_label_, lv_color_white(), 0);
     lv_obj_set_style_text_align(pomo_countdown_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(pomo_countdown_label_, "25:00");
+    char init_time[8];
+    snprintf(init_time, sizeof(init_time), "%02d:00", init_focus);
+    lv_label_set_text(pomo_countdown_label_, init_time);
     lv_obj_align(pomo_countdown_label_, LV_ALIGN_CENTER, 0, -30);
 
     // ============================================================
@@ -176,7 +183,9 @@ void CustomLcdDisplay::SetupPomodoroUI() {
     lv_obj_set_style_text_opa(pomo_info_label_, LV_OPA_60, 0);
     lv_obj_set_style_text_align(pomo_info_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(pomo_info_label_, SCR_W);
-    lv_label_set_text(pomo_info_label_, "25分钟 专注 / 5分钟 休息");
+    char init_info[64];
+    snprintf(init_info, sizeof(init_info), "专注%d分钟 双击切换/长按启动", init_focus);
+    lv_label_set_text(pomo_info_label_, init_info);
     lv_obj_align(pomo_info_label_, LV_ALIGN_TOP_MID, 0, bar_y + 20);
 
     // ============================================================

@@ -1,6 +1,8 @@
 #ifndef __CUSTOM_LCD_DISPLAY_H__
 #define __CUSTOM_LCD_DISPLAY_H__
 
+#define BOOT_MESSAGE "BitWorld"
+
 #include <atomic>
 #include <driver/gpio.h>
 #include "lcd_display.h"

@@ -60,6 +60,10 @@ public:
     // 获取状态文字描述
     std::string getStateText() const;
 
+    // 是否处于休息模式（用于 IDLE 状态 UI 显示）
+    bool isBreakMode() const { return break_mode_.load(); }
+    void toggleBreakMode() { break_mode_.store(!break_mode_.load()); }
+
     // 获取格式化的剩余时间 "MM:SS"
     std::string getRemainingTimeStr() const;
 
@@ -90,6 +94,7 @@ private:
     std::atomic<int> total_seconds_{0};
     std::atomic<bool> stop_requested_{false};
     std::atomic<bool> noise_stop_requested_{false};
+    std::atomic<bool> break_mode_{false};  // true=下次启动为休息模式
 
     int minutes_ = 25;
     int break_minutes_ = 5;

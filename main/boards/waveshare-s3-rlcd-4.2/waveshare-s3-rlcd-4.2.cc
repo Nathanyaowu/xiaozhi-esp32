@@ -206,20 +206,14 @@ private:
         user_button_.OnDoubleClick([this]() {
             if (display_) display_->NotifyUserActivity();
             if (display_ && display_->IsPomodoroMode()) {
-                // 番茄钟页面双击：切换专注/休息模式
+                // 番茄钟页面双击：切换专注/休息模式（保持IDLE状态）
                 auto& pomo = PomodoroManager::getInstance();
-                Settings pomo_settings("pomodoro", false);
-                int focus_min = pomo_settings.GetInt("focus", 25);
-                int break_min = pomo_settings.GetInt("break", 5);
-                auto state = pomo.getState();
-                if (state == PomodoroManager::IDLE || state == PomodoroManager::COUNTING) {
-                    // IDLE或专注中 → 切到休息模式
-                    pomo.startBreak(break_min);
-                    ESP_LOGI("UserButton", "双击切换到休息模式: %d分钟", break_min);
+                pomo.stop();
+                pomo.toggleBreakMode();
+                if (pomo.isBreakMode()) {
+                    ESP_LOGI("UserButton", "双击切换到休息模式(IDLE)");
                 } else {
-                    // 休息中/暂停 → 切到专注模式
-                    pomo.start(focus_min, false, break_min);
-                    ESP_LOGI("UserButton", "双击切换到专注模式: %d分钟", focus_min);
+                    ESP_LOGI("UserButton", "双击切换到专注模式(IDLE)");
                 }
             } else {
                 RefreshAllData();
@@ -284,8 +278,13 @@ private:
                     Settings pomo_settings("pomodoro", false);
                     int focus_min = pomo_settings.GetInt("focus", 25);
                     int break_min = pomo_settings.GetInt("break", 5);
-                    pomo.start(focus_min, false, break_min);
-                    ESP_LOGI("UserButton", "番茄钟启动: %d分钟专注, %d分钟休息", focus_min, break_min);
+                    if (pomo.isBreakMode()) {
+                        pomo.startBreak(break_min);
+                        ESP_LOGI("UserButton", "番茄钟启动休息: %d分钟", break_min);
+                    } else {
+                        pomo.start(focus_min, false, break_min);
+                        ESP_LOGI("UserButton", "番茄钟启动专注: %d分钟, 休息%d分钟", focus_min, break_min);
+                    }
                 } else {
                     pomo.stop();
                     ESP_LOGI("UserButton", "番茄钟已重置");

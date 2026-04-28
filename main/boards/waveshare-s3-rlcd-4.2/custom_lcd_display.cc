@@ -244,6 +244,14 @@ void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
     if (chat_status_label_ == nullptr && music_chat_status_label_ == nullptr) return;
     if (!content || strlen(content) == 0) return;
 
+    // 开机时 Application 会显示 UserAgent，替换为自定义启动文案
+    const char* display_content = content;
+    static bool boot_message_shown = false;
+    if (!boot_message_shown && strcmp(role, "system") == 0) {
+        display_content = BOOT_MESSAGE;
+        boot_message_shown = true;
+    }
+
     // 停止可能正在运行的滚动动画（系统信息或之前的 AI 滚动）
     lv_anim_delete(chat_status_label_, nullptr);
     
@@ -253,7 +261,7 @@ void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
     saved_chat_text_.clear();
     
     // 设置文本内容
-    lv_label_set_text(chat_status_label_, content);
+    lv_label_set_text(chat_status_label_, display_content);
     lv_label_set_long_mode(chat_status_label_, LV_LABEL_LONG_WRAP);
     
     // 先恢复居中对齐（正常模式），计算内容高度
@@ -291,12 +299,12 @@ void CustomLcdDisplay::SetChatMessage(const char* role, const char* content) {
     // 音乐页同步显示 AI 文案
     if (music_chat_status_label_) {
         lv_label_set_long_mode(music_chat_status_label_, LV_LABEL_LONG_WRAP);
-        lv_label_set_text(music_chat_status_label_, content);
+        lv_label_set_text(music_chat_status_label_, display_content);
     }
     // 番茄钟页同步显示 AI 文案
     if (pomo_chat_status_label_) {
         lv_label_set_long_mode(pomo_chat_status_label_, LV_LABEL_LONG_WRAP);
-        lv_label_set_text(pomo_chat_status_label_, content);
+        lv_label_set_text(pomo_chat_status_label_, display_content);
     }
 }
 
