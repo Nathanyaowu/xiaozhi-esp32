@@ -64,47 +64,8 @@ th{color:#666;font-weight:500}
 </style>
 </head>
 <body>
-<h2>📈 股票自选配置</h2>
-<div id="msg" class="msg"></div>
-<div class="card">
-<table>
-<thead><tr><th>代码</th><th>名称</th><th>市场</th><th></th></tr></thead>
-<tbody id="list"></tbody>
-</table>
-<div id="empty" class="empty" style="display:none">暂无自选股票</div>
-</div>
-<div class="card">
-<h3 style="margin-bottom:8px;font-size:14px;color:#666">添加股票</h3>
-<div class="add-form">
-<label>代码<input id="code" placeholder="如 600519"></label>
-<label>名称<input id="name" placeholder="如 贵州茅台"></label>
-<label>市场
-<select id="market">
-<option value="0">A股(沪)</option>
-<option value="1">A股(深)</option>
-<option value="2">港股</option>
-<option value="3">美股</option>
-</select>
-</label>
-<button class="btn btn-add" onclick="addStock()">添加</button>
-</div>
-<div style="margin-top:10px;font-size:12px;color:#888;line-height:1.8">
-<b>代码格式说明：</b><br>
-A股(沪)：主板600/601/603、科创板688、ETF 51x/58x（输入6位数字）<br>
-A股(深)：主板000/001、中小板002、创业板300/301、ETF 159xxx<br>
-港股：5位数字，补零（如腾讯填 00700）<br>
-美股：英文代号，小写（如苹果填 aapl）
-</div>
-</div>
-<div class="card">
-<h3 style="margin-bottom:8px;font-size:14px;color:#666">刷新设置</h3>
-<p style="font-size:12px;color:#888;margin-bottom:8px">股票页按此间隔刷新(5~300秒)，非股票页固定60秒刷新一次</p>
-<div class="add-form">
-<label>刷新间隔<input id="interval" type="number" min="5" max="300" value="30" style="width:60px">秒</label>
-</div>
-<button class="btn btn-add" style="margin-top:10px" onclick="saveInterval()">保存</button>
-</div>
-<h2 style="margin-top:20px">⚙️ 系统设置</h2>
+<h2>⚙️ 系统设置</h2>
+<div id="msg-sys" class="msg"></div>
 <div class="card">
 <h3 style="margin-bottom:8px;font-size:14px;color:#666">音量控制</h3>
 <div class="add-form" style="align-items:center">
@@ -168,6 +129,7 @@ A股(深)：主板000/001、中小板002、创业板300/301、ETF 159xxx<br>
 <p style="font-size:12px;color:#888;margin-top:8px">长按USER键启动番茄钟（番茄钟页面时）</p>
 </div>
 <h2 style="margin-top:20px">📝 备忘录</h2>
+<div id="msg-memo" class="msg"></div>
 <div class="card">
 <table>
 <thead><tr><th>日期</th><th>时间</th><th>内容</th><th></th></tr></thead>
@@ -185,13 +147,53 @@ A股(深)：主板000/001、中小板002、创业板300/301、ETF 159xxx<br>
 </div>
 <p style="font-size:12px;color:#888;margin-top:8px">日期不填=当天触发；时间不填=仅显示不提醒</p>
 </div>
+<h2 style="margin-top:20px">📈 股票自选配置</h2>
+<div id="msg-stock" class="msg"></div>
+<div class="card">
+<table>
+<thead><tr><th>代码</th><th>名称</th><th>市场</th><th></th></tr></thead>
+<tbody id="list"></tbody>
+</table>
+<div id="empty" class="empty" style="display:none">暂无自选股票</div>
+</div>
+<div class="card">
+<h3 style="margin-bottom:8px;font-size:14px;color:#666">添加股票</h3>
+<div class="add-form">
+<label>代码<input id="code" placeholder="如 600519"></label>
+<label>名称<input id="name" placeholder="如 贵州茅台"></label>
+<label>市场
+<select id="market">
+<option value="0">A股(沪)</option>
+<option value="1">A股(深)</option>
+<option value="2">港股</option>
+<option value="3">美股</option>
+</select>
+</label>
+<button class="btn btn-add" onclick="addStock()">添加</button>
+</div>
+<div style="margin-top:10px;font-size:12px;color:#888;line-height:1.8">
+<b>代码格式说明：</b><br>
+A股(沪)：主板600/601/603、科创板688、ETF 51x/58x（输入6位数字）<br>
+A股(深)：主板000/001、中小板002、创业板300/301、ETF 159xxx<br>
+港股：5位数字，补零（如腾讯填 00700）<br>
+美股：英文代号，小写（如苹果填 aapl）
+</div>
+</div>
+<div class="card">
+<h3 style="margin-bottom:8px;font-size:14px;color:#666">刷新设置</h3>
+<p style="font-size:12px;color:#888;margin-bottom:8px">股票页按此间隔刷新(5~300秒)，非股票页固定60秒刷新一次</p>
+<div class="add-form">
+<label>刷新间隔<input id="interval" type="number" min="5" max="300" value="30" style="width:60px">秒</label>
+</div>
+<button class="btn btn-add" style="margin-top:10px" onclick="saveInterval()">保存</button>
+</div>
 <script>
 let stocks=[];
 const MKT_PREFIX=['sh','sz','hk','gb_'];
 const MKT_NAME=['A股(沪)','A股(深)','港股','美股'];
 
-function showMsg(text,ok){
-  const m=document.getElementById('msg');
+function showMsg(text,ok,target){
+  const m=document.getElementById(target||'msg-stock');
   m.textContent=text;
   m.className='msg '+(ok?'ok':'err');
   setTimeout(()=>{m.className='msg'},3000);
@@ -241,11 +243,11 @@ function save(){
 
 function saveInterval(){
   const v=parseInt(document.getElementById('interval').value);
-  if(isNaN(v)||v<5||v>300){showMsg('间隔范围 5~300 秒',false);return;}
+  if(isNaN(v)||v<5||v>300){showMsg('间隔范围 5~300 秒',false,'msg-stock');return;}
   fetch('/api/stock/interval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interval:v})})
   .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'保存失败')});return r.json()})
-  .then(()=>showMsg('刷新间隔已保存',true))
-  .catch(e=>showMsg(e.message,false));
+  .then(()=>showMsg('刷新间隔已保存',true,'msg-stock'))
+  .catch(e=>showMsg(e.message,false,'msg-stock'));
 }
 
 fetch('/api/stock').then(r=>r.json()).then(d=>{stocks=d;render()}).catch(()=>render());
@@ -266,14 +268,14 @@ function delMemo(i){
   saveMemo();
 }
 function addMemo(){
-  if(memos.length>=10){showMsg('最多10条备忘',false);return;}
+  if(memos.length>=10){showMsg('最多10条备忘',false,'msg-memo');return;}
   const d=document.getElementById('memodate').value;
   const t=document.getElementById('memotime').value.trim();
   const c=document.getElementById('memocontent').value.trim();
-  if(!c){showMsg('请输入备忘内容',false);return;}
-  if(c.length>48){showMsg('内容过长(最多48字符)',false);return;}
-  if(t&&!/^\d{2}:\d{2}$/.test(t)){showMsg('时间格式应为 HH:MM',false);return;}
-  if(t){const[h,m]=[parseInt(t),parseInt(t.slice(3))];if(h>23||m>59){showMsg('时间无效(00:00~23:59)',false);return;}}
+  if(!c){showMsg('请输入备忘内容',false,'msg-memo');return;}
+  if(c.length>48){showMsg('内容过长(最多48字符)',false,'msg-memo');return;}
+  if(t&&!/^\d{2}:\d{2}$/.test(t)){showMsg('时间格式应为 HH:MM',false,'msg-memo');return;}
+  if(t){const[h,m]=[parseInt(t),parseInt(t.slice(3))];if(h>23||m>59){showMsg('时间无效(00:00~23:59)',false,'msg-memo');return;}}
   memos.push({t:t,c:c,d:d});
   document.getElementById('memodate').value='';
   document.getElementById('memotime').value='';
@@ -283,8 +285,8 @@ function addMemo(){
 function saveMemo(){
   fetch('/api/memo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(memos)})
   .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'保存失败')});return r.json()})
-  .then(()=>{showMsg('备忘已保存',true);renderMemo()})
-  .catch(e=>showMsg(e.message,false));
+  .then(()=>{showMsg('备忘已保存',true,'msg-memo');renderMemo()})
+  .catch(e=>showMsg(e.message,false,'msg-memo'));
 }
 fetch('/api/memo').then(r=>r.json()).then(d=>{memos=d;renderMemo()}).catch(()=>renderMemo());
 
@@ -292,8 +294,8 @@ function saveVolume(){
   const v=parseInt(document.getElementById('volume').value);
   fetch('/api/volume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({volume:v})})
   .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'设置失败')});return r.json()})
-  .then(()=>showMsg('音量已设置为 '+v+'%',true))
-  .catch(e=>showMsg(e.message,false));
+  .then(()=>showMsg('音量已设置为 '+v+'%',true,'msg-sys'))
+  .catch(e=>showMsg(e.message,false,'msg-sys'));
 }
 fetch('/api/volume').then(r=>r.json()).then(d=>{
   const v=d.volume||50;
@@ -305,8 +307,8 @@ function saveCity(){
   const c=document.getElementById('city').value;
   fetch('/api/weather/city',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({city:c})})
   .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'保存失败')});return r.json()})
-  .then(()=>showMsg('天气城市已保存，正在同步...',true))
-  .catch(e=>showMsg(e.message,false));
+  .then(()=>showMsg('天气城市已保存，正在同步...',true,'msg-sys'))
+  .catch(e=>showMsg(e.message,false,'msg-sys'));
 }
 fetch('/api/weather/city').then(r=>r.json()).then(d=>{
   if(d.city)document.getElementById('city').value=d.city;
@@ -317,8 +319,8 @@ function savePomodoro(){
   const b=parseInt(document.getElementById('pomo-break').value)||5;
   fetch('/api/pomodoro',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({focus:f,break_min:b})})
   .then(r=>{if(!r.ok)return r.json().then(j=>{throw new Error(j.error||'保存失败')});return r.json()})
-  .then(()=>showMsg('番茄钟设置已保存',true))
-  .catch(e=>showMsg(e.message,false));
+  .then(()=>showMsg('番茄钟设置已保存',true,'msg-sys'))
+  .catch(e=>showMsg(e.message,false,'msg-sys'));
 }
 fetch('/api/pomodoro').then(r=>r.json()).then(d=>{
   document.getElementById('pomo-focus').value=d.focus||25;
@@ -395,19 +397,7 @@ esp_err_t WebConfigServer::HandleGetStockConfig(httpd_req_t *req) {
 
     httpd_resp_set_type(req, "application/json");
     if (json.empty()) {
-        // 返回硬编码默认值
-        cJSON *arr = cJSON_CreateArray();
-        for (int i = 0; i < MAX_STOCKS; i++) {
-            cJSON *item = cJSON_CreateObject();
-            cJSON_AddStringToObject(item, "code", kDefaultStocks[i].code);
-            cJSON_AddStringToObject(item, "name", kDefaultStocks[i].name);
-            cJSON_AddNumberToObject(item, "market", (int)kDefaultStocks[i].market);
-            cJSON_AddItemToArray(arr, item);
-        }
-        char *out = cJSON_PrintUnformatted(arr);
-        httpd_resp_send(req, out, HTTPD_RESP_USE_STRLEN);
-        cJSON_free(out);
-        cJSON_Delete(arr);
+        httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
     } else {
         httpd_resp_send(req, json.c_str(), json.length());
     }

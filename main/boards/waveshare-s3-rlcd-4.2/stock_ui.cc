@@ -199,7 +199,7 @@ void CustomLcdDisplay::SetupStockUI() {
         lv_obj_set_style_text_font(stock_name_labels_[i], font_data, 0);
         lv_obj_set_style_text_color(stock_name_labels_[i], lv_color_white(), 0);
         lv_obj_set_pos(stock_name_labels_[i], 0, 0);
-        lv_label_set_text(stock_name_labels_[i], kDefaultStocks[i].name);
+        lv_label_set_text(stock_name_labels_[i], "---");
 
         // 现价列
         stock_price_labels_[i] = lv_label_create(screen);

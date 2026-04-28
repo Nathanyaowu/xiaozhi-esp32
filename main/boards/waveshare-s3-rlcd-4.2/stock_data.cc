@@ -19,13 +19,8 @@
 static const char *TAG = "StockData";
 
 // 默认跟踪的 5 支股票（硬编码，后续可改为从 SD 卡/Web 配置读取）
-const StockConfig kDefaultStocks[MAX_STOCKS] = {
-    {"sh600519", "贵州茅台", MARKET_SH},
-    {"sz000001", "平安银行", MARKET_SZ},
-    {"sh601318", "中国平安", MARKET_SH},
-    {"sz000858", "五粮液",   MARKET_SZ},
-    {"sz300750", "宁德时代", MARKET_SZ},
-};
+// 最大支持股票数
+// MAX_STOCKS 定义在头文件中
 
 // HTTP 响应缓冲区（多支股票一次请求，每支约 300 字节）
 #define HTTP_RESP_BUF_SIZE 4096
@@ -226,15 +221,13 @@ int GetStockConfigs(StockConfig* out_configs) {
     std::string json = settings.GetString("list", "");
 
     if (json.empty()) {
-        memcpy(out_configs, kDefaultStocks, sizeof(StockConfig) * MAX_STOCKS);
-        return MAX_STOCKS;
+        return 0;
     }
 
     cJSON *arr = cJSON_Parse(json.c_str());
     if (!arr || !cJSON_IsArray(arr)) {
         if (arr) cJSON_Delete(arr);
-        memcpy(out_configs, kDefaultStocks, sizeof(StockConfig) * MAX_STOCKS);
-        return MAX_STOCKS;
+        return 0;
     }
 
     int count = cJSON_GetArraySize(arr);
@@ -252,8 +245,7 @@ int GetStockConfigs(StockConfig* out_configs) {
 
         if (!cJSON_IsString(code) || !cJSON_IsString(name) || !cJSON_IsNumber(market)) {
             cJSON_Delete(arr);
-            memcpy(out_configs, kDefaultStocks, sizeof(StockConfig) * MAX_STOCKS);
-            return MAX_STOCKS;
+            return 0;
         }
 
         strncpy(s_code_bufs[i], code->valuestring, sizeof(s_code_bufs[i]) - 1);

@@ -28,14 +28,12 @@ struct StockData {
     bool valid;
 };
 
-// 默认股票列表
-extern const StockConfig kDefaultStocks[MAX_STOCKS];
-
 // 从新浪财经 API 批量获取股票数据
 // 返回成功获取的股票数量
 int FetchStockData(const StockConfig* configs, StockData* results, int count);
 
-// 从 NVS 读取用户配置的股票列表，读取失败则返回 kDefaultStocks
+// 从 NVS 读取用户配置的股票列表
+// NVS 为空或解析失败时返回 0（屏幕显示"到web添加"）
 // out_configs: 输出数组（调用者分配，至少 MAX_STOCKS 个元素）
 // 返回实际股票数量
 int GetStockConfigs(StockConfig* out_configs);
